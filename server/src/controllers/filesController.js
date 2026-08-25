@@ -149,8 +149,18 @@ async function readFile(req, res) {
       return res.status(404).json({ success: false, error: 'File not found' });
     }
 
+    const ext = path.extname(filepath).toLowerCase();
+    const isImage = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico', '.bmp', '.avif'].includes(ext);
+
+    if (isImage) {
+      const buffer = fs.readFileSync(targetPath);
+      const mime = ext === '.svg' ? 'image/svg+xml' : `image/${ext.replace('.', '')}`;
+      const base64Data = `data:${mime};base64,${buffer.toString('base64')}`;
+      return res.status(200).json({ success: true, data: { filepath, content: base64Data, isImage: true } });
+    }
+
     const content = fs.readFileSync(targetPath, 'utf8');
-    return res.status(200).json({ success: true, data: { filepath, content } });
+    return res.status(200).json({ success: true, data: { filepath, content, isImage: false } });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }

@@ -1460,8 +1460,58 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Line-Numbered Editor Area with Real-Time Remote Cursors */}
+                  {/* Line-Numbered Editor Area or Image Photo Previewer */}
                   {(() => {
+                    const ext = (activeTabPath || '').split('.').pop()?.toLowerCase() || '';
+                    const isImageFile = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico', '.bmp', '.avif'].includes(ext) || activeFileContext.startsWith('data:image/');
+
+                    if (isImageFile) {
+                      return (
+                        <div
+                          style={{
+                            flex: 1,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: '#141414',
+                            border: '1px solid #2d2d2d',
+                            borderRadius: '6px',
+                            padding: '24px',
+                            overflow: 'auto',
+                          }}
+                        >
+                          <div
+                            style={{
+                              maxHeight: '100%',
+                              maxWidth: '100%',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              gap: '12px',
+                            }}
+                          >
+                            <img
+                              src={activeFileContext}
+                              alt={activeTabPath}
+                              style={{
+                                maxWidth: '100%',
+                                maxHeight: '70vh',
+                                objectFit: 'contain',
+                                borderRadius: '6px',
+                                border: '1px solid #3c3c3c',
+                                boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                                background: 'repeating-conic-gradient(#202020 0% 25%, #181818 0% 50%) 50% / 16px 16px',
+                              }}
+                            />
+                            <div style={{ fontSize: '11px', color: '#858585', fontFamily: 'monospace' }}>
+                              🖼️ Image Preview • {activeTabPath.split('/').pop()}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
                     const currentUserId = String(currentUser?._id || currentUser?.id || 'anon');
                     const fileCursorsObj = remoteCursors[activeTabPath] || {};
                     const activeCursorsList = Object.values(fileCursorsObj).filter(

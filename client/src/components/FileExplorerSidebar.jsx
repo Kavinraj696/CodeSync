@@ -23,6 +23,28 @@ export default function FileExplorerSidebar({
   const [dropTargetFolder, setDropTargetFolder] = useState(null);
   const folderInputRef = useRef(null);
 
+  const isBinaryOrImage = (file, relativePath) => {
+    const ext = (relativePath || '').split('.').pop()?.toLowerCase() || '';
+    const binaryExtensions = [
+      'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'tiff', 'avif',
+      'pdf', 'zip', 'tar', 'gz', '7z', 'rar',
+      'mp3', 'wav', 'ogg', 'mp4', 'webm', 'mov',
+      'woff', 'woff2', 'ttf', 'eot',
+      'exe', 'dll', 'so', 'dylib', 'bin', 'pyc', 'class'
+    ];
+
+    if (binaryExtensions.includes(ext)) return true;
+    if (file.type && (
+      file.type.startsWith('image/') ||
+      file.type.startsWith('audio/') ||
+      file.type.startsWith('video/') ||
+      file.type === 'application/pdf'
+    )) {
+      return true;
+    }
+    return false;
+  };
+
   const processFileList = async (fileList, targetFolder = selectedFolder) => {
     if (!fileList || fileList.length === 0) return;
 
@@ -35,14 +57,9 @@ export default function FileExplorerSidebar({
             return null;
           }
 
-          try {
-            const textContent = await file.text();
-            return {
-              path: relativePath,
-              content: textContent,
-              isBase64: false,
-            };
-          } catch (readErr) {
+          const isBinary = isBinaryOrImage(file, relativePath);
+
+          if (isBinary) {
             return new Promise((resolve) => {
               const reader = new FileReader();
               reader.onload = () => {
@@ -56,6 +73,29 @@ export default function FileExplorerSidebar({
               reader.onerror = () => resolve(null);
               reader.readAsDataURL(file);
             });
+          } else {
+            try {
+              const textContent = await file.text();
+              return {
+                path: relativePath,
+                content: textContent,
+                isBase64: false,
+              };
+            } catch (readErr) {
+              return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const base64Data = (reader.result || '').toString().split(',')[1] || '';
+                  resolve({
+                    path: relativePath,
+                    content: base64Data,
+                    isBase64: true,
+                  });
+                };
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(file);
+              });
+            }
           }
         })
       );
