@@ -1,9 +1,0 @@
-mongodb
-user_name:kavinrajs2006_db_user
-password:9wojrkxbzv4Lzec4
-
-con str
-mongodb+srv://<db_username>:9wojrkxbzv4Lzec4@codesync.a4tgnzp.mongodb.net/?appName=CodeSync
-
-
-mongodb+srv://kavinrajs2006_db_user:9wojrkxbzv4Lzec4@codesync.a4tgnzp.mongodb.net/?appName=CodeSync
