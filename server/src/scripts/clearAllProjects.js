@@ -9,7 +9,7 @@ try {
 
 const Workspace = require('../models/Workspace');
 
-const MONGO_URI = 'mongodb+srv://kavinrajs2006_db_user:9wojrkxbzv4Lzec4@codesync.a4tgnzp.mongodb.net/?appName=CodeSync';
+const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/codesync';
 
 async function clearAllProjects() {
   try {
