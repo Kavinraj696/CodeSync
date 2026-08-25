@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Folder, FolderOpen, FileCode, RefreshCw, FilePlus, FolderPlus, Trash2, ChevronRight, ChevronDown } from 'lucide-react';
+import { Folder, FolderOpen, FileCode, RefreshCw, FilePlus, FolderPlus, FolderUp, Trash2, ChevronRight, ChevronDown } from 'lucide-react';
 
 export default function FileExplorerSidebar({
   roomId = 'demo-room-1',
@@ -21,6 +21,74 @@ export default function FileExplorerSidebar({
   const [newItemName, setNewItemName] = useState('');
   const [draggedItemPath, setDraggedItemPath] = useState(null);
   const [dropTargetFolder, setDropTargetFolder] = useState(null);
+  const folderInputRef = useRef(null);
+
+  const processFileList = async (fileList, targetFolder = selectedFolder) => {
+    if (!fileList || fileList.length === 0) return;
+
+    setLoading(true);
+    try {
+      const payloadFiles = await Promise.all(
+        fileList.map(async (file) => {
+          const relativePath = file.webkitRelativePath || file.name || file.relativePath;
+          if (!relativePath || relativePath.includes('node_modules/') || relativePath.includes('.git/') || relativePath.endsWith('.DS_Store')) {
+            return null;
+          }
+
+          try {
+            const textContent = await file.text();
+            return {
+              path: relativePath,
+              content: textContent,
+              isBase64: false,
+            };
+          } catch (readErr) {
+            return new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const base64Data = (reader.result || '').toString().split(',')[1] || '';
+                resolve({
+                  path: relativePath,
+                  content: base64Data,
+                  isBase64: true,
+                });
+              };
+              reader.onerror = () => resolve(null);
+              reader.readAsDataURL(file);
+            });
+          }
+        })
+      );
+
+      const validFiles = payloadFiles.filter(Boolean);
+      if (validFiles.length === 0) {
+        alert('No valid files found in selected folder.');
+        setLoading(false);
+        return;
+      }
+
+      const res = await axios.post(`/api/workspaces/${roomId}/files/import-folder`, {
+        targetDir: targetFolder || '',
+        files: validFiles,
+      });
+
+      if (res.data.success) {
+        fetchFileTree();
+      }
+    } catch (err) {
+      alert(`Error importing folder: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setLoading(false);
+      if (folderInputRef.current) {
+        folderInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleFolderUpload = (e) => {
+    const fileList = Array.from(e.target.files || []);
+    processFileList(fileList, selectedFolder);
+  };
 
   const fetchFileTree = async () => {
     try {
@@ -395,6 +463,22 @@ export default function FileExplorerSidebar({
               >
                 <FolderPlus size={15} />
               </button>
+              <button
+                className="panel-ctrl-btn"
+                onClick={() => folderInputRef.current && folderInputRef.current.click()}
+                title={selectedFolder ? `Import Project Folder into '${selectedFolder}'` : 'Import Project Folder into Root'}
+              >
+                <FolderUp size={15} color="#4ec9b0" />
+              </button>
+              <input
+                type="file"
+                ref={folderInputRef}
+                webkitdirectory="true"
+                directory="true"
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleFolderUpload}
+              />
             </>
           )}
           <button className="panel-ctrl-btn" onClick={fetchFileTree} title="Refresh Files">

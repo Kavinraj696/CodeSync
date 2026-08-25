@@ -273,10 +273,66 @@ async function moveFile(req, res) {
   }
 }
 
+/**
+ * POST /api/workspaces/:roomId/files/import-folder
+ * Import an entire local project folder structure into workspace
+ */
+async function importFolder(req, res) {
+  try {
+    const { roomId } = req.params;
+    if (await isViewerUser(roomId, req)) {
+      return res.status(403).json({ success: false, error: 'Read-only viewers cannot import folders.' });
+    }
+
+    const { targetDir = '', files = [] } = req.body;
+    const workspaceDir = gitService.getWorkspaceDirPath(roomId);
+
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ success: false, error: 'No valid files provided for folder import.' });
+    }
+
+    let createdCount = 0;
+    for (const f of files) {
+      if (!f || !f.path) continue;
+      // Normalize slashes and sanitize relative path
+      const cleanRelPath = f.path.replace(/\\/g, '/').replace(/^\/+/, '');
+      const cleanTargetDir = (targetDir || '').replace(/\\/g, '/').replace(/^\/+/, '');
+      const fullDestPath = path.join(workspaceDir, cleanTargetDir, cleanRelPath);
+
+      // Verify destination is inside workspaceDir to prevent traversal
+      sanitizePath(workspaceDir, fullDestPath);
+
+      // Create parent subdirectories recursively
+      fs.mkdirSync(path.dirname(fullDestPath), { recursive: true });
+
+      if (f.isBase64 && typeof f.content === 'string') {
+        const buffer = Buffer.from(f.content, 'base64');
+        fs.writeFileSync(fullDestPath, buffer);
+      } else {
+        fs.writeFileSync(fullDestPath, f.content || '', 'utf8');
+      }
+      createdCount++;
+    }
+
+    const updatedTree = getFileTree(workspaceDir, workspaceDir);
+    notifyWorkspaceTreeUpdate(req, roomId, 'importFolder', { count: createdCount });
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully imported project folder (${createdCount} files).`,
+      data: updatedTree,
+    });
+  } catch (error) {
+    console.error('[FilesController] Error importing project folder:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
 module.exports = {
   listFiles,
   createFile,
   createFolder,
+  importFolder,
   readFile,
   deleteFile,
   moveFile,

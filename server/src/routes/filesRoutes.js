@@ -5,6 +5,7 @@ const filesController = require('../controllers/filesController');
 router.get('/', filesController.listFiles);
 router.post('/', filesController.createFile);
 router.post('/folders', filesController.createFolder);
+router.post('/import-folder', filesController.importFolder);
 router.post('/read', filesController.readFile);
 router.post('/move', filesController.moveFile);
 router.delete('/', filesController.deleteFile);
