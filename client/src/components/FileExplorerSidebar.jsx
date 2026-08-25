@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Folder, FolderOpen, FileCode, RefreshCw, FilePlus, FolderPlus, FolderUp, Trash2, ChevronRight, ChevronDown } from 'lucide-react';
+import { Folder, FolderOpen, FileCode, RefreshCw, FilePlus, FolderPlus, FolderUp, Trash2, Edit2, ChevronRight, ChevronDown } from 'lucide-react';
 
 export default function FileExplorerSidebar({
   roomId = 'demo-room-1',
@@ -19,6 +19,8 @@ export default function FileExplorerSidebar({
   const [isCreatingRoot, setIsCreatingRoot] = useState(false);
   const [createType, setCreateType] = useState('file'); // 'file' or 'folder'
   const [newItemName, setNewItemName] = useState('');
+  const [renamingPath, setRenamingPath] = useState(null); // item path being renamed
+  const [renameValue, setRenameValue] = useState(''); // new name value
   const [draggedItemPath, setDraggedItemPath] = useState(null);
   const [dropTargetFolder, setDropTargetFolder] = useState(null);
   const folderInputRef = useRef(null);
@@ -262,6 +264,40 @@ export default function FileExplorerSidebar({
     }
   };
 
+  const startRename = (itemPath, currentName, e) => {
+    if (e) e.stopPropagation();
+    setRenamingPath(itemPath);
+    setRenameValue(currentName);
+  };
+
+  const handleRenameSubmit = async (e, itemPath) => {
+    if (e) e.preventDefault();
+    const trimmedNewName = renameValue.trim();
+    const currentName = itemPath.split('/').pop();
+
+    if (!trimmedNewName || trimmedNewName === currentName) {
+      setRenamingPath(null);
+      return;
+    }
+
+    const parentDir = itemPath.includes('/') ? itemPath.substring(0, itemPath.lastIndexOf('/')) : '';
+    const newTargetPath = parentDir ? `${parentDir}/${trimmedNewName}` : trimmedNewName;
+
+    try {
+      const res = await axios.post(`/api/workspaces/${roomId}/files/move`, {
+        sourcePath: itemPath,
+        targetPath: newTargetPath,
+      });
+
+      if (res.data.success) {
+        setRenamingPath(null);
+        fetchFileTree();
+      }
+    } catch (err) {
+      alert(`Error renaming item: ${err.response?.data?.error || err.message}`);
+    }
+  };
+
   const dragHoverTimerRef = useRef(null);
 
   // Drag and Drop handlers
@@ -365,15 +401,35 @@ export default function FileExplorerSidebar({
             onDragLeave={(e) => handleDragLeaveFolder(e, item.path)}
             onDrop={(e) => handleDropOnFolder(e, item.path)}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', flex: 1 }}>
               {isExpanded ? <ChevronDown size={14} color="#858585" /> : <ChevronRight size={14} color="#858585" />}
               {isExpanded ? <FolderOpen size={14} color="#cca700" /> : <Folder size={14} color="#cca700" />}
-              <span style={{ fontWeight: '600', color: isSelected ? '#ffffff' : '#e0e0e0', fontSize: '13px' }}>
-                {item.name}
-              </span>
+              {renamingPath === item.path ? (
+                <form
+                  onSubmit={(e) => handleRenameSubmit(e, item.path)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ display: 'inline-block', flex: 1 }}
+                >
+                  <input
+                    type="text"
+                    className="new-file-input"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={(e) => handleRenameSubmit(e, item.path)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') setRenamingPath(null);
+                    }}
+                    autoFocus
+                  />
+                </form>
+              ) : (
+                <span style={{ fontWeight: '600', color: isSelected ? '#ffffff' : '#e0e0e0', fontSize: '13px' }}>
+                  {item.name}
+                </span>
+              )}
             </div>
 
-            {/* Folder Actions: Add File, Add Subfolder, Delete */}
+            {/* Folder Actions: Add File, Add Subfolder, Rename, Delete (LAST) */}
             {!isViewer && (
               <div className="folder-item-actions" style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                 <button
@@ -389,6 +445,13 @@ export default function FileExplorerSidebar({
                   title={`New Subfolder inside '${item.name}'`}
                 >
                   <FolderPlus size={13} color="#cca700" />
+                </button>
+                <button
+                  className="file-delete-btn"
+                  onClick={(e) => startRename(item.path, item.name, e)}
+                  title="Rename folder"
+                >
+                  <Edit2 size={12} color="#cccccc" />
                 </button>
                 <button
                   className="file-delete-btn"
@@ -460,18 +523,47 @@ export default function FileExplorerSidebar({
           cursor: 'grab',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', flex: 1 }}>
           <FileCode size={14} color="#007acc" />
-          <span className="file-tree-name">{item.name}</span>
+          {renamingPath === item.path ? (
+            <form
+              onSubmit={(e) => handleRenameSubmit(e, item.path)}
+              onClick={(e) => e.stopPropagation()}
+              style={{ display: 'inline-block', flex: 1 }}
+            >
+              <input
+                type="text"
+                className="new-file-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onBlur={(e) => handleRenameSubmit(e, item.path)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setRenamingPath(null);
+                }}
+                autoFocus
+              />
+            </form>
+          ) : (
+            <span className="file-tree-name">{item.name}</span>
+          )}
         </div>
         {!isViewer && (
-          <button
-            className="file-delete-btn"
-            onClick={(e) => handleDeleteItem(item.path, false, e)}
-            title="Delete file"
-          >
-            <Trash2 size={12} />
-          </button>
+          <div className="file-item-actions" style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <button
+              className="file-delete-btn"
+              onClick={(e) => startRename(item.path, item.name, e)}
+              title="Rename file"
+            >
+              <Edit2 size={12} color="#cccccc" />
+            </button>
+            <button
+              className="file-delete-btn"
+              onClick={(e) => handleDeleteItem(item.path, false, e)}
+              title="Delete file"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
         )}
       </div>
     );
