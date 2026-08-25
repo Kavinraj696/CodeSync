@@ -67,14 +67,17 @@ export default function FileExplorerSidebar({
         return;
       }
 
-      const res = await axios.post(`/api/workspaces/${roomId}/files/import-folder`, {
-        targetDir: targetFolder || '',
-        files: validFiles,
-      });
-
-      if (res.data.success) {
-        fetchFileTree();
+      // Chunk payload into batches of 30 files to avoid HTTP 413 Payload Too Large
+      const BATCH_SIZE = 30;
+      for (let i = 0; i < validFiles.length; i += BATCH_SIZE) {
+        const batch = validFiles.slice(i, i + BATCH_SIZE);
+        await axios.post(`/api/workspaces/${roomId}/files/import-folder`, {
+          targetDir: targetFolder || '',
+          files: batch,
+        });
       }
+
+      fetchFileTree();
     } catch (err) {
       alert(`Error importing folder: ${err.response?.data?.error || err.message}`);
     } finally {
