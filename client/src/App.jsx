@@ -95,6 +95,17 @@ export default function App() {
     return USER_COLORS[index];
   };
 
+  const isRunnableFile = (filepath = '') => {
+    if (!filepath) return false;
+    const ext = filepath.split('.').pop()?.toLowerCase() || '';
+    const runnableExts = [
+      'py', 'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs',
+      'cpp', 'c', 'cc', 'h', 'hpp',
+      'go', 'java', 'rs', 'rb', 'php', 'cs', 'dart', 'kt', 'kts', 'sh', 'bash'
+    ];
+    return runnableExts.includes(ext);
+  };
+
   // Auth User state
   const [currentUser, setCurrentUser] = useState(() => {
     const savedToken = localStorage.getItem('codesync_token');
@@ -1428,33 +1439,35 @@ export default function App() {
                           <span style={{ fontSize: '11px', color: saveStatus === 'saved' ? '#4ec9b0' : saveStatus === 'saving' ? '#cca700' : '#858585' }}>
                             {saveStatus === 'saved' ? '✓ Saved' : saveStatus === 'saving' ? 'Saving...' : 'Unsaved changes'}
                           </span>
-                          <button
-                            style={{
-                              background: '#0dbc79',
-                              color: '#ffffff',
-                              border: 'none',
-                              padding: '3px 10px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              fontWeight: '600',
-                            }}
-                            onClick={async () => {
-                              try {
-                                await handleSaveFile();
-                              } catch (e) {}
+                          {isRunnableFile(activeTabPath) && (
+                            <button
+                              style={{
+                                background: '#0dbc79',
+                                color: '#ffffff',
+                                border: 'none',
+                                padding: '3px 10px',
+                                borderRadius: '4px',
+                                fontSize: '11px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontWeight: '600',
+                              }}
+                              onClick={async () => {
+                                try {
+                                  await handleSaveFile();
+                                } catch (e) {}
 
-                              if (!activeTabPath) return;
-                              const runCmd = getFullPathRunCommand(activeTabPath);
-                              setRunCommandTrigger({ command: runCmd, timestamp: Date.now() });
-                            }}
-                            title={`Run ${activeTabPath} in Terminal`}
-                          >
-                            <Play size={12} fill="#ffffff" /> Run Code
-                          </button>
+                                if (!activeTabPath) return;
+                                const runCmd = getFullPathRunCommand(activeTabPath);
+                                setRunCommandTrigger({ command: runCmd, timestamp: Date.now() });
+                              }}
+                              title={`Run ${activeTabPath} in Terminal`}
+                            >
+                              <Play size={12} fill="#ffffff" /> Run Code
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
