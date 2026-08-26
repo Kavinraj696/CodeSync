@@ -8,6 +8,18 @@ export default defineConfig({
       'monaco-editor/esm/vs/editor/editor.api.js': 'monaco-editor',
     },
   },
+  optimizeDeps: {
+    include: [
+      'yjs',
+      'y-monaco',
+      'y-protocols',
+      'monaco-editor',
+      '@monaco-editor/react',
+      'socket.io-client',
+      'axios',
+      'lucide-react',
+    ],
+  },
   server: {
     port: 3000,
     proxy: {
