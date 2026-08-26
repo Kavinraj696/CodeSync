@@ -464,39 +464,28 @@ export default function App() {
       const color = getUserColor(uId);
 
       setRemoteCursors((prev) => {
-        const next = {};
-        // Ensure user cursor is removed from all other files when switching active file
-        Object.keys(prev).forEach((fp) => {
-          if (fp === filepath) {
-            next[fp] = {
-              ...(prev[fp] || {}),
-              [uId]: {
-                userId: uId,
-                username: user.username || 'Collaborator',
-                lineNumber: lineNumber || 1,
-                columnNumber: columnNumber || 1,
-                color,
-                lastActive: Date.now(),
-              },
-            };
-          } else {
-            const { [uId]: removed, ...rest } = prev[fp] || {};
+        const next = { ...prev };
+        // Remove user cursor from all other files
+        Object.keys(next).forEach((fp) => {
+          if (next[fp] && next[fp][uId]) {
+            const { [uId]: removed, ...rest } = next[fp];
             next[fp] = rest;
           }
         });
 
-        if (!next[filepath]) {
-          next[filepath] = {
-            [uId]: {
-              userId: uId,
-              username: user.username || 'Collaborator',
-              lineNumber: lineNumber || 1,
-              columnNumber: columnNumber || 1,
-              color,
-              lastActive: Date.now(),
-            },
-          };
-        }
+        // Set cursor in the target filepath
+        next[filepath] = {
+          ...(next[filepath] || {}),
+          [uId]: {
+            userId: uId,
+            username: user.username || 'Collaborator',
+            filepath,
+            lineNumber: lineNumber || 1,
+            columnNumber: columnNumber || 1,
+            color,
+            lastActive: Date.now(),
+          },
+        };
 
         return next;
       });

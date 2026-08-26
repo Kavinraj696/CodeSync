@@ -21,7 +21,9 @@ async function getOrCreateServerYDoc(roomId, filepath) {
 
   // Try to read initial file content from workspace directory on disk
   try {
-    const workspace = await Workspace.findOne({ $or: [{ roomId }, { id: roomId }] });
+    const workspace = await Workspace.findOne({
+      $or: [{ roomId }, { id: roomId }, { _id: roomId.match(/^[0-9a-fA-F]{24}$/) ? roomId : null }].filter(Boolean),
+    });
     if (workspace && workspace.filepath) {
       const targetPath = path.normalize(path.join(workspace.filepath, filepath));
       if (targetPath.startsWith(workspace.filepath) && fs.existsSync(targetPath)) {
@@ -66,11 +68,25 @@ function setupSyncSocket(io) {
         socket.roomId = roomId;
         socket.userId = activeUserId;
         socket.role = role || 'editor';
-        const roomName = `workspace:${roomId}`;
-        socket.join(roomName);
 
-        const memberCount = io.sockets.adapter.rooms.get(roomName)?.size || 0;
-        console.log(`[DEBUG-ROOM] JOINED roomName='${roomName}' socketId=${socket.id} role=${socket.role} memberCount=${memberCount}`);
+        // Join room by requested roomId
+        const roomName1 = `workspace:${roomId}`;
+        socket.join(roomName1);
+
+        // Also resolve workspace from DB to join alternate room aliases (e.g. Mongo _id vs roomId)
+        try {
+          const ws = await Workspace.findOne({
+            $or: [{ roomId }, { id: roomId }, { _id: roomId.match(/^[0-9a-fA-F]{24}$/) ? roomId : null }].filter(Boolean),
+          });
+          if (ws) {
+            if (ws.roomId) socket.join(`workspace:${ws.roomId}`);
+            if (ws.id) socket.join(`workspace:${ws.id}`);
+            if (ws._id) socket.join(`workspace:${ws._id.toString()}`);
+          }
+        } catch (e) {}
+
+        const memberCount = io.sockets.adapter.rooms.get(roomName1)?.size || 0;
+        console.log(`[DEBUG-ROOM] JOINED roomName='${roomName1}' socketId=${socket.id} role=${socket.role} memberCount=${memberCount}`);
       }
       if (activeUserId) {
         const userRoom = `user:${activeUserId}`;
@@ -116,14 +132,18 @@ function setupSyncSocket(io) {
       // Step 15 Security Validation
       if (!socket.user && process.env.NODE_ENV === 'production') return;
       if (!roomId || !filepath || !update) return;
-      if (socket.roomId && socket.roomId !== roomId) return;
       if (socket.role === 'viewer') return;
 
+      // Ensure socket is in the workspace room
       const roomName = `workspace:${roomId}`;
+      if (!socket.rooms.has(roomName)) {
+        socket.join(roomName);
+      }
+
       const memberCount = io.sockets.adapter.rooms.get(roomName)?.size || 0;
       const socketRoomsList = Array.from(socket.rooms);
 
-      console.log(`[DEBUG-CRDT] SERVER_RECEIVE socketId=${socket.id} userId=${socket.user?.id || socket.userId} roomId=${roomId} socketRoomId=${socket.roomId} file=${filepath} bytes=${update.length}`);
+      console.log(`[DEBUG-CRDT] SERVER_RECEIVE socketId=${socket.id} userId=${socket.user?.id || socket.userId} roomId=${roomId} file=${filepath} bytes=${update.length}`);
       console.log(`[DEBUG-ROOM] SOCKET_ROOMS rooms=${JSON.stringify(socketRoomsList)} roomMembers=${memberCount}`);
 
       // Apply update to server-side Y.Doc state
@@ -134,14 +154,25 @@ function setupSyncSocket(io) {
         console.error('[DEBUG-CRDT] Error applying update to server YDoc:', err);
       }
 
-      console.log(`[DEBUG-CRDT] SERVER_BROADCAST roomId=${roomId} file=${filepath}`);
+      console.log(`[DEBUG-CRDT] SERVER_BROADCAST roomId=${roomId} file=${filepath} toMembers=${memberCount}`);
 
+      // Broadcast to room members except sender
       socket.to(roomName).emit('crdt:remote_update', {
         roomId,
         filepath,
         update,
         senderSocketId: socket.id,
       });
+
+      // Also broadcast to alternate socket.roomId if different
+      if (socket.roomId && socket.roomId !== roomId) {
+        socket.to(`workspace:${socket.roomId}`).emit('crdt:remote_update', {
+          roomId: socket.roomId,
+          filepath,
+          update,
+          senderSocketId: socket.id,
+        });
+      }
     });
 
     // Presence & cursor tracking

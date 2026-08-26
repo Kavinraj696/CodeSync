@@ -104,6 +104,7 @@ export default function CodeEditor({
     socket,
     initialValue: value,
     readOnly,
+    onContentChange: onChange,
   });
 
   // Render team members' remote cursors overlay in Monaco Editor
@@ -114,7 +115,7 @@ export default function CodeEditor({
 
     const currentUserId = String(currentUser?._id || currentUser?.id || '');
     const activeRemoteCursors = Object.values(remoteCursors || {}).filter(
-      (c) => String(c.userId || c.id) !== currentUserId
+      (c) => String(c.userId || c.id) !== currentUserId && (!c.filepath || c.filepath === filepath)
     );
 
     const newDecorations = activeRemoteCursors.map((c) => {
@@ -135,7 +136,13 @@ export default function CodeEditor({
     });
 
     decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations);
-  }, [remoteCursors, currentUser, editorInstance, monacoInstance]);
+
+    return () => {
+      if (editorInstance && decorationsRef.current.length > 0) {
+        decorationsRef.current = editorInstance.deltaDecorations(decorationsRef.current, []);
+      }
+    };
+  }, [remoteCursors, filepath, currentUser, editorInstance, monacoInstance]);
 
   const handleEditorDidMount = (editor, monaco) => {
     setEditorInstance(editor);

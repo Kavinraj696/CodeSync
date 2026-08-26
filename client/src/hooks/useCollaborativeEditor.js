@@ -14,6 +14,7 @@ export function useCollaborativeEditor({
   socket,
   initialValue = '',
   readOnly = false,
+  onContentChange,
 }) {
   const ydocRef = useRef(null);
   const bindingRef = useRef(null);
@@ -65,12 +66,19 @@ export function useCollaborativeEditor({
       }
 
       console.log(`[DEBUG-CRDT] DOC_READY file=${filepath} ytextLen=${ytext.length} monacoLen=${monacoModel.getValue().length}`);
+      if (onContentChange) {
+        onContentChange(monacoModel.getValue());
+      }
     };
 
     socket.on('crdt:doc_response', handleDocResponse);
 
     // 4. Listen for local Y.Doc updates and broadcast over Socket.IO
     const handleYdocUpdate = (update, origin) => {
+      if (onContentChange) {
+        onContentChange(monacoModel.getValue());
+      }
+
       // Do NOT re-emit updates received from remote sockets or initial server sync
       if (origin === 'remote' || origin === 'init-server' || readOnly) return;
 
@@ -104,6 +112,10 @@ export function useCollaborativeEditor({
           ytext: ytext.toString(),
           editor: monacoModel.getValue(),
         });
+
+        if (onContentChange) {
+          onContentChange(monacoModel.getValue());
+        }
 
         // Verification check
         if (ytext.toString() !== monacoModel.getValue()) {
