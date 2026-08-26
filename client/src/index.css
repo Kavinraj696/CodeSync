@@ -19,9 +19,6 @@
 .monaco-remote-cursor-caret {
   border-left: 2px solid #007acc !important;
   margin-left: -1px;
-  position: absolute;
-  z-index: 10;
-  pointer-events: none;
 }
 
 * {
