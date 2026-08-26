@@ -115,19 +115,19 @@ export default function CodeEditor({
 
     const currentUserId = String(currentUser?._id || currentUser?.id || '');
     const activeRemoteCursors = Object.values(remoteCursors || {}).filter(
-      (c) => String(c.userId || c.id) !== currentUserId && (!c.filepath || c.filepath === filepath)
+      (c) =>
+        String(c.userId || c.id) !== currentUserId &&
+        (!c.filepath || c.filepath === filepath) &&
+        (c.lastActive ? Date.now() - c.lastActive < 15000 : true)
     );
 
     const newDecorations = activeRemoteCursors.map((c) => {
       const line = Math.max(1, c.lineNumber || 1);
       const col = Math.max(1, c.columnNumber || 1);
       return {
-        range: new monaco.Range(line, col, line, col + 1),
+        range: new monaco.Range(line, col, line, col),
         options: {
-          className: 'monaco-remote-cursor-line',
-          glyphMarginClassName: 'monaco-remote-cursor-glyph',
-          linesDecorationsClassName: 'monaco-remote-cursor-gutter',
-          inlineClassName: 'monaco-remote-cursor-inline',
+          className: 'monaco-remote-cursor-caret',
           hoverMessage: {
             value: `👤 **${c.username || 'Collaborator'}** (Line ${line}, Col ${col})`,
           },
