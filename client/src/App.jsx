@@ -440,13 +440,6 @@ export default function App() {
     });
     syncSocketRef.current = socket;
 
-    socket.on('code:remote_change', ({ filepath, content }) => {
-      setTabContents((prev) => ({
-        ...prev,
-        [filepath]: content,
-      }));
-    });
-
     socket.on('cursor:remote_move', ({ filepath, lineNumber, columnNumber, user, socketId }) => {
       if (!filepath || !user) return;
       const uId = String(user.id || socketId);

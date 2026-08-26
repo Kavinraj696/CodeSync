@@ -1,6 +1,6 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import Editor from '@monaco-editor/react';
-import * as Y from 'yjs';
+import { useCollaborativeEditor } from '../../hooks/useCollaborativeEditor';
 
 /**
  * Maps file extensions to Monaco Editor supported languages
@@ -89,32 +89,28 @@ export default function CodeEditor({
   onOpenCommandPalette,
   onOpenSearch,
 }) {
-  const editorRef = useRef(null);
-  const monacoRef = useRef(null);
-  const ydocRef = useRef(null);
+  const [editorInstance, setEditorInstance] = useState(null);
+  const [monacoInstance, setMonacoInstance] = useState(null);
   const decorationsRef = useRef([]);
 
   const language = getMonacoLanguage(filepath);
 
-  // Sync value changes to Monaco model when remote updates arrive
-  useEffect(() => {
-    if (editorRef.current) {
-      const currentVal = editorRef.current.getValue();
-      if (value !== undefined && value !== currentVal) {
-        const position = editorRef.current.getPosition();
-        editorRef.current.setValue(value);
-        if (position) {
-          editorRef.current.setPosition(position);
-        }
-      }
-    }
-  }, [value]);
+  // Yjs CRDT Collaboration Hook - Single Source of Truth
+  useCollaborativeEditor({
+    editor: editorInstance,
+    monaco: monacoInstance,
+    filepath,
+    roomId,
+    socket,
+    initialValue: value,
+    readOnly,
+  });
 
   // Render team members' remote cursors overlay in Monaco Editor
   useEffect(() => {
-    if (!editorRef.current || !monacoRef.current) return;
-    const editor = editorRef.current;
-    const monaco = monacoRef.current;
+    if (!editorInstance || !monacoInstance) return;
+    const editor = editorInstance;
+    const monaco = monacoInstance;
 
     const currentUserId = String(currentUser?._id || currentUser?.id || '');
     const activeRemoteCursors = Object.values(remoteCursors || {}).filter(
@@ -124,7 +120,6 @@ export default function CodeEditor({
     const newDecorations = activeRemoteCursors.map((c) => {
       const line = Math.max(1, c.lineNumber || 1);
       const col = Math.max(1, c.columnNumber || 1);
-      const color = c.color || '#007acc';
       return {
         range: new monaco.Range(line, col, line, col + 1),
         options: {
@@ -140,11 +135,11 @@ export default function CodeEditor({
     });
 
     decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations);
-  }, [remoteCursors, currentUser]);
+  }, [remoteCursors, currentUser, editorInstance, monacoInstance]);
 
   const handleEditorDidMount = (editor, monaco) => {
-    editorRef.current = editor;
-    monacoRef.current = monaco;
+    setEditorInstance(editor);
+    setMonacoInstance(monaco);
 
     // Configure keybindings
     // Ctrl+S / Cmd+S -> Save
@@ -167,7 +162,7 @@ export default function CodeEditor({
       if (onOpenSearch) onOpenSearch();
     });
 
-    // Track local cursor position & selection movement
+    // Track local cursor position & selection movement for presence overlay
     editor.onDidChangeCursorPosition((e) => {
       if (onCursorMove) {
         const position = e.position;
@@ -180,60 +175,12 @@ export default function CodeEditor({
         });
       }
     });
-
-    // Setup Yjs CRDT update vectors over Socket.IO
-    if (socket && roomId && filepath) {
-      try {
-        const ydoc = new Y.Doc();
-        ydocRef.current = ydoc;
-        const ytext = ydoc.getText('monaco');
-
-        if (value && ytext.toString() !== value) {
-          ytext.insert(0, value);
-        }
-
-        ydoc.on('update', (update, origin) => {
-          if (origin !== 'remote') {
-            socket.emit('crdt:update', {
-              roomId,
-              filepath,
-              update: Array.from(update),
-            });
-          }
-        });
-
-        const handleRemoteCrdtUpdate = ({ filepath: remotePath, update }) => {
-          if (remotePath === filepath && update && ydocRef.current) {
-            try {
-              Y.applyUpdate(ydocRef.current, new Uint8Array(update), 'remote');
-            } catch (err) {}
-          }
-        };
-
-        socket.on('crdt:remote_update', handleRemoteCrdtUpdate);
-
-        return () => {
-          socket.off('crdt:remote_update', handleRemoteCrdtUpdate);
-          if (ydocRef.current) ydocRef.current.destroy();
-        };
-      } catch (e) {
-        console.warn('[MonacoEditor] Yjs CRDT init:', e.message);
-      }
-    }
   };
 
   const handleEditorChange = (newValue) => {
     const val = newValue || '';
     if (onChange && !readOnly) {
       onChange(val);
-    }
-    // Broadcast live code change event to Socket.IO
-    if (socket && roomId && filepath && !readOnly) {
-      socket.emit('code:change', {
-        roomId,
-        filepath,
-        content: val,
-      });
     }
   };
 
@@ -243,7 +190,7 @@ export default function CodeEditor({
         height="100%"
         width="100%"
         language={language}
-        value={value}
+        defaultValue={value}
         theme={theme}
         onChange={handleEditorChange}
         onMount={handleEditorDidMount}

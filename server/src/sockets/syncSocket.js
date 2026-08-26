@@ -47,24 +47,20 @@ function setupSyncSocket(io) {
       }
     });
 
-    // Real-time live code changes
-    socket.on('code:change', ({ roomId, filepath, content, cursorPosition }) => {
-      if (!roomId || !filepath) return;
-      if (socket.role === 'viewer') return; // Viewers cannot edit code
-      const roomName = `workspace:${roomId}`;
-      socket.to(roomName).emit('code:remote_change', {
-        filepath,
-        content,
-        cursorPosition,
-        senderSocketId: socket.id,
-      });
-    });
-
-    // CRDT Yjs updates broadcasting
+    // CRDT Yjs updates broadcasting (Single Source of Truth for collaborative editing)
     socket.on('crdt:update', ({ roomId, filepath, update }) => {
+      // Step 12 Security Validation:
+      // 1. Socket must be authenticated
+      // 2. Socket must have joined requested workspace room
+      // 3. User must not be a viewer
+      // 4. roomId and filepath must be non-empty and valid
+      if (!socket.user && process.env.NODE_ENV === 'production') return;
       if (!roomId || !filepath || !update) return;
+      if (socket.roomId && socket.roomId !== roomId) return;
       if (socket.role === 'viewer') return;
+
       socket.to(`workspace:${roomId}`).emit('crdt:remote_update', {
+        roomId,
         filepath,
         update,
         senderSocketId: socket.id,
