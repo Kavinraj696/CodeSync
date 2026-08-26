@@ -12,7 +12,7 @@ export default defineConfig({
     include: [
       'yjs',
       'y-monaco',
-      'y-protocols',
+      'y-protocols/awareness',
       'monaco-editor',
       '@monaco-editor/react',
       'socket.io-client',
