@@ -116,6 +116,9 @@ export default function CodeEditor({
     const currentUserId = String(currentUser?._id || currentUser?.id || '');
     const activeRemoteCursors = Object.values(remoteCursors || {}).filter(
       (c) =>
+        c &&
+        typeof c === 'object' &&
+        (c.userId || c.id) &&
         String(c.userId || c.id) !== currentUserId &&
         (!c.filepath || c.filepath === filepath) &&
         (c.lastActive ? Date.now() - c.lastActive < 15000 : true)
@@ -147,6 +150,11 @@ export default function CodeEditor({
   const handleEditorDidMount = (editor, monaco) => {
     setEditorInstance(editor);
     setMonacoInstance(monaco);
+
+    // Establish Monaco native initial cursor position
+    if (!editor.getPosition()) {
+      editor.setPosition({ lineNumber: 1, column: 1 });
+    }
 
     // Configure keybindings
     // Ctrl+S / Cmd+S -> Save
@@ -218,7 +226,7 @@ export default function CodeEditor({
           formatOnPaste: true,
           formatOnType: true,
           folding: true,
-          renderLineHighlight: 'all',
+          renderLineHighlight: 'line',
           fontFamily: 'Fira Code, Consolas, Monaco, monospace',
         }}
       />
