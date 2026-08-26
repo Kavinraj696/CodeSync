@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react';
 import * as Y from 'yjs';
+import { MonacoBinding } from 'y-monaco';
 
 /**
- * Custom hook managing Yjs CRDT document lifecycle & Monaco Editor binding.
- * Serves as the single source of truth for real-time collaborative text editing.
+ * Custom hook managing Yjs CRDT document lifecycle & official y-monaco binding.
+ * Serves as the SINGLE SOURCE OF TRUTH for real-time collaborative text editing.
  */
 export function useCollaborativeEditor({
   editor,
@@ -15,9 +16,12 @@ export function useCollaborativeEditor({
   readOnly = false,
 }) {
   const ydocRef = useRef(null);
+  const bindingRef = useRef(null);
 
   useEffect(() => {
     if (!editor || !monaco || !filepath || !roomId || !socket) return;
+
+    console.log(`[CRDT] JOIN workspace=${roomId} file=${filepath}`);
 
     // 1. Create file-scoped Y.Doc
     const ydoc = new Y.Doc();
@@ -27,90 +31,29 @@ export function useCollaborativeEditor({
     const monacoModel = editor.getModel();
     if (!monacoModel) return;
 
-    // 2. Initial document content seeding
-    // Populate Y.Text only if it is completely empty
+    // 2. Initial document content seeding (deterministic - only once if Y.Text is empty)
     if (ytext.length === 0 && initialValue) {
       ydoc.transact(() => {
         ytext.insert(0, initialValue);
       }, 'init');
     }
 
-    // Set Monaco model initial text from Y.Text if Y.Text has content
-    if (ytext.length > 0) {
-      const yval = ytext.toString();
-      if (monacoModel.getValue() !== yval) {
-        monacoModel.setValue(yval);
-      }
-    }
+    // 3. Bind Monaco Model to Y.Text using official y-monaco MonacoBinding
+    const binding = new MonacoBinding(
+      ytext,
+      monacoModel,
+      new Set([editor])
+    );
+    bindingRef.current = binding;
 
-    // 3. Mutex flag to prevent echo loops during edit application
-    let isApplyingRemote = false;
-
-    // 4. Monaco -> Y.Text change handler
-    const monacoChangeDisposable = monacoModel.onDidChangeContent((event) => {
-      if (isApplyingRemote || readOnly) return;
-
-      ydoc.transact(() => {
-        // Apply Monaco changes right to left to keep character offsets stable
-        const sortedChanges = [...event.changes].sort((a, b) => b.rangeOffset - a.rangeOffset);
-        for (const change of sortedChanges) {
-          if (change.rangeLength > 0) {
-            ytext.delete(change.rangeOffset, change.rangeLength);
-          }
-          if (change.text.length > 0) {
-            ytext.insert(change.rangeOffset, change.text);
-          }
-        }
-      }, 'local-monaco');
-    });
-
-    // 5. Y.Text -> Monaco change observer
-    const ytextObserver = (event) => {
-      // Ignore edits originating from local Monaco typing
-      if (event.transaction.origin === 'local-monaco') return;
-
-      isApplyingRemote = true;
-      try {
-        let index = 0;
-        const edits = [];
-        for (const op of event.delta) {
-          if (op.retain !== undefined) {
-            index += op.retain;
-          } else if (op.insert !== undefined) {
-            const insertStr = typeof op.insert === 'string' ? op.insert : '';
-            const pos = monacoModel.getPositionAt(index);
-            edits.push({
-              range: new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
-              text: insertStr,
-              forceMoveMarkers: true,
-            });
-            index += insertStr.length;
-          } else if (op.delete !== undefined) {
-            const pos = monacoModel.getPositionAt(index);
-            const endPos = monacoModel.getPositionAt(index + op.delete);
-            edits.push({
-              range: new monaco.Range(pos.lineNumber, pos.column, endPos.lineNumber, endPos.column),
-              text: '',
-              forceMoveMarkers: true,
-            });
-          }
-        }
-        if (edits.length > 0) {
-          monacoModel.applyEdits(edits);
-        }
-      } finally {
-        isApplyingRemote = false;
-      }
-    };
-
-    ytext.observe(ytextObserver);
-
-    // 6. Y.Doc update listener -> Socket.IO emit
-    const ydocUpdateHandler = (update, origin) => {
-      // Do NOT re-emit updates received from remote socket
+    // 4. Listen for local Y.Doc updates and broadcast over Socket.IO
+    const handleYdocUpdate = (update, origin) => {
+      // Do NOT re-emit updates received from remote sockets
       if (origin === 'remote' || readOnly) return;
 
       const updateArray = Array.from(update);
+      console.log(`[CRDT] LOCAL UPDATE file=${filepath} bytes=${updateArray.length}`);
+
       socket.emit('crdt:update', {
         roomId,
         filepath,
@@ -118,30 +61,35 @@ export function useCollaborativeEditor({
       });
     };
 
-    ydoc.on('update', ydocUpdateHandler);
+    ydoc.on('update', handleYdocUpdate);
 
-    // 7. Socket.IO remote update listener
+    // 5. Listen for incoming remote CRDT updates from Socket.IO
     const handleRemoteUpdate = ({ filepath: incomingPath, update, roomId: incomingRoomId }) => {
       if (incomingPath !== filepath) return;
       if (incomingRoomId && incomingRoomId !== roomId) return;
       if (!update || !ydocRef.current) return;
 
+      console.log(`[CRDT] REMOTE UPDATE file=${filepath} bytes=${update.length}`);
       try {
         const updateUint8 = new Uint8Array(update);
+        console.log(`[CRDT] APPLY REMOTE file=${filepath}`);
         Y.applyUpdate(ydocRef.current, updateUint8, 'remote');
       } catch (err) {
-        console.error('[Yjs] Error applying remote update:', err);
+        console.error('[CRDT] Error applying remote update:', err);
       }
     };
 
     socket.on('crdt:remote_update', handleRemoteUpdate);
 
-    // 8. Cleanup on file switch, tab close, or component unmount
+    // 6. Cleanup on file switch, tab close, or unmount
     return () => {
+      console.log(`[CRDT] LEAVE/CLEANUP file=${filepath}`);
       socket.off('crdt:remote_update', handleRemoteUpdate);
-      ydoc.off('update', ydocUpdateHandler);
-      ytext.unobserve(ytextObserver);
-      monacoChangeDisposable.dispose();
+      ydoc.off('update', handleYdocUpdate);
+      if (bindingRef.current) {
+        bindingRef.current.destroy();
+        bindingRef.current = null;
+      }
       ydoc.destroy();
       ydocRef.current = null;
     };
