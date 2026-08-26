@@ -72,9 +72,11 @@ export function getMonacoLanguage(filepath = '') {
 
 export default function CodeEditor({
   filepath,
-  value,
+  value = '',
   onChange,
   onCursorMove,
+  remoteCursors = {},
+  currentUser,
   readOnly = false,
   fontSize = 14,
   tabSize = 2,
@@ -90,14 +92,61 @@ export default function CodeEditor({
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
   const ydocRef = useRef(null);
+  const decorationsRef = useRef([]);
 
   const language = getMonacoLanguage(filepath);
+
+  // Sync value changes to Monaco model when remote updates arrive
+  useEffect(() => {
+    if (editorRef.current) {
+      const currentVal = editorRef.current.getValue();
+      if (value !== undefined && value !== currentVal) {
+        const position = editorRef.current.getPosition();
+        editorRef.current.setValue(value);
+        if (position) {
+          editorRef.current.setPosition(position);
+        }
+      }
+    }
+  }, [value]);
+
+  // Render team members' remote cursors overlay in Monaco Editor
+  useEffect(() => {
+    if (!editorRef.current || !monacoRef.current) return;
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+
+    const currentUserId = String(currentUser?._id || currentUser?.id || '');
+    const activeRemoteCursors = Object.values(remoteCursors || {}).filter(
+      (c) => String(c.userId || c.id) !== currentUserId
+    );
+
+    const newDecorations = activeRemoteCursors.map((c) => {
+      const line = Math.max(1, c.lineNumber || 1);
+      const col = Math.max(1, c.columnNumber || 1);
+      const color = c.color || '#007acc';
+      return {
+        range: new monaco.Range(line, col, line, col + 1),
+        options: {
+          className: 'monaco-remote-cursor-line',
+          glyphMarginClassName: 'monaco-remote-cursor-glyph',
+          linesDecorationsClassName: 'monaco-remote-cursor-gutter',
+          inlineClassName: 'monaco-remote-cursor-inline',
+          hoverMessage: {
+            value: `👤 **${c.username || 'Collaborator'}** (Line ${line}, Col ${col})`,
+          },
+        },
+      };
+    });
+
+    decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations);
+  }, [remoteCursors, currentUser]);
 
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
 
-    // Configure editor keybindings (Phase 5)
+    // Configure keybindings
     // Ctrl+S / Cmd+S -> Save
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       if (onSave) onSave();
@@ -118,7 +167,7 @@ export default function CodeEditor({
       if (onOpenSearch) onOpenSearch();
     });
 
-    // Track local cursor movement & selections for real-time collaboration presence
+    // Track local cursor position & selection movement
     editor.onDidChangeCursorPosition((e) => {
       if (onCursorMove) {
         const position = e.position;
@@ -132,7 +181,7 @@ export default function CodeEditor({
       }
     });
 
-    // Setup Yjs CRDT update vectors over Socket.IO if socket is active
+    // Setup Yjs CRDT update vectors over Socket.IO
     if (socket && roomId && filepath) {
       try {
         const ydoc = new Y.Doc();
@@ -174,8 +223,17 @@ export default function CodeEditor({
   };
 
   const handleEditorChange = (newValue) => {
+    const val = newValue || '';
     if (onChange && !readOnly) {
-      onChange(newValue || '');
+      onChange(val);
+    }
+    // Broadcast live code change event to Socket.IO
+    if (socket && roomId && filepath && !readOnly) {
+      socket.emit('code:change', {
+        roomId,
+        filepath,
+        content: val,
+      });
     }
   };
 

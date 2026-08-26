@@ -432,7 +432,12 @@ export default function App() {
   // Real-time synchronization via Socket.IO
   useEffect(() => {
     const socketHost = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
-    const socket = io(socketHost, { transports: ['polling', 'websocket'] });
+    const token = localStorage.getItem('codesync_token') || '';
+    const socket = io(socketHost, {
+      auth: { token },
+      query: { token },
+      transports: ['polling', 'websocket'],
+    });
     syncSocketRef.current = socket;
 
     socket.on('code:remote_change', ({ filepath, content }) => {
@@ -1558,6 +1563,8 @@ export default function App() {
                       <CodeEditor
                         filepath={activeTabPath}
                         value={activeFileContext}
+                        remoteCursors={remoteCursors[activeTabPath]}
+                        currentUser={currentUser}
                         onChange={(newVal) => handleEditorChange({ target: { value: newVal } })}
                         onCursorMove={(cursorPos) => {
                           if (syncSocketRef.current) {

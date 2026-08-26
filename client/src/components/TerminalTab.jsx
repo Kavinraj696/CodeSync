@@ -75,7 +75,10 @@ export default function TerminalTab({ roomId, tabId, isActive, language = 'javas
 
     // 2. Connect to Socket.IO /terminal namespace
     const socketHost = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+    const token = localStorage.getItem('codesync_token') || '';
     const socket = io(`${socketHost}/terminal`, {
+      auth: { token },
+      query: { token },
       transports: ['polling', 'websocket'],
       reconnection: true,
       reconnectionAttempts: 10,
