@@ -128,9 +128,9 @@ export default function CodeEditor({
       const line = Math.max(1, c.lineNumber || 1);
       const col = Math.max(1, c.columnNumber || 1);
       return {
-        range: new monaco.Range(line, col, line, col),
+        range: new monaco.Range(line, col, line, col + 1),
         options: {
-          className: 'monaco-remote-cursor-caret',
+          inlineClassName: 'monaco-remote-cursor-caret',
           hoverMessage: {
             value: `👤 **${c.username || 'Collaborator'}** (Line ${line}, Col ${col})`,
           },
@@ -227,6 +227,7 @@ export default function CodeEditor({
           formatOnType: true,
           folding: true,
           renderLineHighlight: 'line',
+          renderLineHighlightOnlyWhenFocus: true,
           fontFamily: 'Fira Code, Consolas, Monaco, monospace',
         }}
       />
