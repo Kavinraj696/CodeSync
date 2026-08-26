@@ -128,9 +128,9 @@ export default function CodeEditor({
       const line = Math.max(1, c.lineNumber || 1);
       const col = Math.max(1, c.columnNumber || 1);
       return {
-        range: new monaco.Range(line, col, line, col + 1),
+        range: new monaco.Range(line, col, line, col),
         options: {
-          inlineClassName: 'monaco-remote-cursor-caret',
+          beforeContentClassName: 'monaco-remote-cursor-caret',
           hoverMessage: {
             value: `👤 **${c.username || 'Collaborator'}** (Line ${line}, Col ${col})`,
           },

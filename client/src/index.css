@@ -16,9 +16,14 @@
 }
 
 /* Monaco Remote Caret Indicator */
-.monaco-remote-cursor-caret {
+.monaco-remote-cursor-caret::before {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 1.1em;
   border-left: 2px solid #007acc !important;
   margin-left: -1px;
+  vertical-align: middle;
 }
 
 * {
