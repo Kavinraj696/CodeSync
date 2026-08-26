@@ -21,7 +21,7 @@ export function useCollaborativeEditor({
   useEffect(() => {
     if (!editor || !monaco || !filepath || !roomId || !socket) return;
 
-    console.log(`[CRDT] JOIN workspace=${roomId} file=${filepath}`);
+    console.log(`[DEBUG-CRDT] JOIN workspace=${roomId} file=${filepath}`);
 
     // 1. Create file-scoped Y.Doc
     const ydoc = new Y.Doc();
@@ -31,14 +31,7 @@ export function useCollaborativeEditor({
     const monacoModel = editor.getModel();
     if (!monacoModel) return;
 
-    // 2. Initial document content seeding (deterministic - only once if Y.Text is empty)
-    if (ytext.length === 0 && initialValue) {
-      ydoc.transact(() => {
-        ytext.insert(0, initialValue);
-      }, 'init');
-    }
-
-    // 3. Bind Monaco Model to Y.Text using official y-monaco MonacoBinding
+    // 2. Bind Monaco Model to Y.Text using official y-monaco MonacoBinding
     const binding = new MonacoBinding(
       ytext,
       monacoModel,
@@ -46,13 +39,45 @@ export function useCollaborativeEditor({
     );
     bindingRef.current = binding;
 
+    // 3. Request current server-side Yjs document state (Step 12)
+    console.log(`[DEBUG-CRDT] REQUEST_DOC_STATE roomId=${roomId} file=${filepath}`);
+    socket.emit('crdt:doc_request', { roomId, filepath });
+
+    // Handle server initial Yjs document response
+    const handleDocResponse = ({ filepath: incomingPath, update }) => {
+      if (incomingPath !== filepath || !ydocRef.current) return;
+
+      if (update && update.length > 0) {
+        console.log(`[DEBUG-CRDT] INIT_SERVER_DOC file=${filepath} bytes=${update.length}`);
+        try {
+          Y.applyUpdate(ydocRef.current, new Uint8Array(update), 'init-server');
+        } catch (err) {
+          console.error('[DEBUG-CRDT] Error applying init-server update:', err);
+        }
+      }
+
+      // If document is still empty after server response and initialValue exists, seed locally
+      if (ytext.length === 0 && initialValue) {
+        console.log(`[DEBUG-CRDT] INIT_LOCAL_DOC_SEED file=${filepath} len=${initialValue.length}`);
+        ydocRef.current.transact(() => {
+          ytext.insert(0, initialValue);
+        }, 'init-local');
+      }
+
+      console.log(`[DEBUG-CRDT] DOC_READY file=${filepath} ytextLen=${ytext.length} monacoLen=${monacoModel.getValue().length}`);
+    };
+
+    socket.on('crdt:doc_response', handleDocResponse);
+
     // 4. Listen for local Y.Doc updates and broadcast over Socket.IO
     const handleYdocUpdate = (update, origin) => {
-      // Do NOT re-emit updates received from remote sockets
-      if (origin === 'remote' || readOnly) return;
+      // Do NOT re-emit updates received from remote sockets or initial server sync
+      if (origin === 'remote' || origin === 'init-server' || readOnly) return;
 
       const updateArray = Array.from(update);
-      console.log(`[CRDT] LOCAL UPDATE file=${filepath} bytes=${updateArray.length}`);
+      console.log(`[DEBUG-CRDT] MONACO_CHANGE file=${filepath} length=${monacoModel.getValue().length}`);
+      console.log(`[DEBUG-CRDT] YDOC_UPDATE file=${filepath} origin=${origin} bytes=${updateArray.length}`);
+      console.log(`[DEBUG-CRDT] SOCKET_SEND roomId=${roomId} file=${filepath} bytes=${updateArray.length}`);
 
       socket.emit('crdt:update', {
         roomId,
@@ -69,13 +94,26 @@ export function useCollaborativeEditor({
       if (incomingRoomId && incomingRoomId !== roomId) return;
       if (!update || !ydocRef.current) return;
 
-      console.log(`[CRDT] REMOTE UPDATE file=${filepath} bytes=${update.length}`);
+      console.log(`[DEBUG-CRDT] SOCKET_RECEIVE roomId=${roomId} file=${filepath} bytes=${update.length}`);
+      console.log(`[DEBUG-CRDT] APPLY_UPDATE file=${filepath}`);
       try {
         const updateUint8 = new Uint8Array(update);
-        console.log(`[CRDT] APPLY REMOTE file=${filepath}`);
         Y.applyUpdate(ydocRef.current, updateUint8, 'remote');
+        console.log(`[DEBUG-CRDT] APPLY_COMPLETE file=${filepath} ytextLength=${ytext.length}`);
+        console.log(`[DEBUG-CRDT] AFTER_REMOTE_UPDATE file=${filepath}`, {
+          ytext: ytext.toString(),
+          editor: monacoModel.getValue(),
+        });
+
+        // Verification check
+        if (ytext.toString() !== monacoModel.getValue()) {
+          console.error('[DEBUG-CRDT] MISMATCH_ERROR! Y.Text does not match Monaco model!', {
+            ytext: ytext.toString(),
+            monaco: monacoModel.getValue(),
+          });
+        }
       } catch (err) {
-        console.error('[CRDT] Error applying remote update:', err);
+        console.error('[DEBUG-CRDT] Error applying remote update:', err);
       }
     };
 
@@ -83,14 +121,23 @@ export function useCollaborativeEditor({
 
     // 6. Cleanup on file switch, tab close, or unmount
     return () => {
-      console.log(`[CRDT] LEAVE/CLEANUP file=${filepath}`);
+      console.log(`[DEBUG-CRDT] LEAVE/CLEANUP file=${filepath}`);
+      socket.off('crdt:doc_response', handleDocResponse);
       socket.off('crdt:remote_update', handleRemoteUpdate);
       ydoc.off('update', handleYdocUpdate);
       if (bindingRef.current) {
-        bindingRef.current.destroy();
+        try {
+          bindingRef.current.destroy();
+        } catch (err) {
+          console.error('[DEBUG-CRDT] Error destroying binding:', err);
+        }
         bindingRef.current = null;
       }
-      ydoc.destroy();
+      try {
+        ydoc.destroy();
+      } catch (err) {
+        console.error('[DEBUG-CRDT] Error destroying ydoc:', err);
+      }
       ydocRef.current = null;
     };
   }, [editor, monaco, filepath, roomId, socket, readOnly]);

@@ -440,6 +440,24 @@ export default function App() {
     });
     syncSocketRef.current = socket;
 
+    socket.on('connect', () => {
+      console.log('[DEBUG-SOCKET] CONNECTED socket.id=', socket.id);
+      const savedId = localStorage.getItem('codesync_active_project_id');
+      if (savedId) {
+        const uId = currentUser?._id || currentUser?.id;
+        console.log('[DEBUG-ROOM] JOIN_REQUEST on connect', { roomId: savedId, userId: uId });
+        socket.emit('join:workspace', { roomId: savedId, userId: uId });
+      }
+    });
+
+    socket.on('connect_error', (err) => {
+      console.error('[DEBUG-SOCKET] CONNECT_ERROR', err.message);
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log('[DEBUG-SOCKET] DISCONNECTED reason=', reason);
+    });
+
     socket.on('cursor:remote_move', ({ filepath, lineNumber, columnNumber, user, socketId }) => {
       if (!filepath || !user) return;
       const uId = String(user.id || socketId);
