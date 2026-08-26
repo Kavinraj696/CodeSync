@@ -1,23 +1,35 @@
+const { authSocketMiddleware, getWorkspaceUserRole } = require('../middleware/authMiddleware');
+
 /**
  * Setup Socket.IO main namespace for real-time workspace & collaboration synchronization
  */
 function setupSyncSocket(io) {
+  // Apply socket authentication middleware
+  io.use(authSocketMiddleware);
+
   io.on('connection', (socket) => {
-    console.log(`[Socket.IO /sync] Client connected: ${socket.id}`);
+    console.log(`[Socket.IO /sync] Client connected: ${socket.id} (User: ${socket.user?.username || 'Anon'})`);
 
     // Join workspace room and user-specific room
-    socket.on('join:workspace', ({ roomId, userId }) => {
+    socket.on('join:workspace', async ({ roomId, userId }) => {
+      const activeUserId = socket.user?.id || userId;
       if (roomId) {
+        // Enforce membership check
+        const role = await getWorkspaceUserRole(roomId, activeUserId);
+        if (!role && process.env.NODE_ENV === 'production') {
+          return socket.emit('error', { code: 'FORBIDDEN', message: 'Not a member of this workspace' });
+        }
+
         socket.roomId = roomId;
-        socket.userId = userId;
+        socket.userId = activeUserId;
+        socket.role = role || 'editor';
         const roomName = `workspace:${roomId}`;
         socket.join(roomName);
-        console.log(`[Socket.IO /sync] Socket ${socket.id} joined room '${roomName}'`);
+        console.log(`[Socket.IO /sync] Socket ${socket.id} joined room '${roomName}' as ${socket.role}`);
       }
-      if (userId) {
-        const userRoom = `user:${userId}`;
+      if (activeUserId) {
+        const userRoom = `user:${activeUserId}`;
         socket.join(userRoom);
-        console.log(`[Socket.IO /sync] Socket ${socket.id} joined user room '${userRoom}'`);
       }
     });
 
@@ -35,11 +47,11 @@ function setupSyncSocket(io) {
       }
     });
 
-    // Real-time live code changes (Google Docs style)
+    // Real-time live code changes
     socket.on('code:change', ({ roomId, filepath, content, cursorPosition }) => {
       if (!roomId || !filepath) return;
+      if (socket.role === 'viewer') return; // Viewers cannot edit code
       const roomName = `workspace:${roomId}`;
-      // Broadcast to all other users in workspace except sender
       socket.to(roomName).emit('code:remote_change', {
         filepath,
         content,
@@ -48,20 +60,43 @@ function setupSyncSocket(io) {
       });
     });
 
-    // Real-time user active file selection & cursor indicators
-    socket.on('cursor:move', ({ roomId, filepath, lineNumber, columnNumber, cursor, user }) => {
+    // CRDT Yjs updates broadcasting
+    socket.on('crdt:update', ({ roomId, filepath, update }) => {
+      if (!roomId || !filepath || !update) return;
+      if (socket.role === 'viewer') return;
+      socket.to(`workspace:${roomId}`).emit('crdt:remote_update', {
+        filepath,
+        update,
+        senderSocketId: socket.id,
+      });
+    });
+
+    // Presence & cursor tracking
+    socket.on('cursor:move', ({ roomId, filepath, lineNumber, columnNumber, selectionStart, selectionEnd, cursor, user }) => {
       if (!roomId) return;
       socket.roomId = roomId;
-      if (user && user.id) {
-        socket.userId = user.id;
-      }
+      const targetUser = socket.user || user || { id: socket.id, username: 'Collaborator' };
       const targetLine = lineNumber || (cursor && cursor.lineNumber) || 1;
       const targetCol = columnNumber || (cursor && cursor.columnNumber) || 1;
+      
       socket.to(`workspace:${roomId}`).emit('cursor:remote_move', {
         filepath,
         lineNumber: targetLine,
         columnNumber: targetCol,
-        user,
+        selectionStart: selectionStart || 0,
+        selectionEnd: selectionEnd || 0,
+        user: targetUser,
+        socketId: socket.id,
+      });
+    });
+
+    // Explicit cursor removal on tab close / file switch
+    socket.on('cursor:remove', ({ roomId, filepath }) => {
+      if (!roomId) return;
+      const uId = socket.user?.id || socket.userId || socket.id;
+      socket.to(`workspace:${roomId}`).emit('cursor:remote_remove', {
+        filepath,
+        userId: uId,
         socketId: socket.id,
       });
     });
@@ -69,7 +104,7 @@ function setupSyncSocket(io) {
     socket.on('disconnect', () => {
       console.log(`[Socket.IO /sync] Client disconnected: ${socket.id}`);
       if (socket.roomId) {
-        const uId = socket.userId || socket.id;
+        const uId = socket.user?.id || socket.userId || socket.id;
         socket.to(`workspace:${socket.roomId}`).emit('cursor:remote_remove', {
           userId: uId,
           socketId: socket.id,

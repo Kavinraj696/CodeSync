@@ -1,0 +1,1615 @@
+You are a senior full-stack engineer, distributed-systems engineer, security engineer, and developer-tools engineer.
+
+You are working directly inside my existing CodeSync repository.
+
+IMPORTANT:
+Do NOT rebuild the project from scratch.
+Do NOT replace working features with mock implementations.
+Do NOT remove existing functionality unless it is demonstrably broken or insecure.
+First inspect the existing repository and understand the current architecture.
+Then incrementally improve it.
+
+PROJECT:
+CodeSync — a browser-based collaborative development environment similar to VS Code/Replit.
+
+CURRENT STACK:
+Frontend:
+- React
+- Vite
+- Axios
+- Socket.IO client
+- xterm.js
+- Lucide
+- Existing custom editor implementation
+
+Backend:
+- Node.js
+- Express
+- Socket.IO
+- MongoDB/Mongoose
+- Docker/Dockerode
+- node-pty
+- JWT authentication
+- Git integration
+- AI API integration
+
+Existing functionality includes:
+- Authentication
+- Projects/workspaces
+- Project members
+- Owner/editor/viewer roles
+- Invitations
+- File explorer
+- Multi-file tabs
+- Code editing
+- Real-time code synchronization
+- Real-time cursors
+- Terminal
+- Docker containers
+- Automatic idle container teardown
+- Git integration
+- Search
+- AI chat
+- AI diff review
+- Command palette
+- Settings
+- User management
+
+GOAL:
+Turn the current CodeSync implementation into a reliable, secure, production-quality collaborative browser IDE.
+
+==================================================
+PHASE 0 — REPOSITORY AUDIT
+==================================================
+
+Before changing code:
+
+1. Inspect the complete repository.
+2. Inspect:
+   - frontend
+   - backend
+   - routes
+   - controllers
+   - services
+   - models
+   - sockets
+   - middleware
+   - Docker configuration
+   - package.json files
+   - environment handling
+   - Git integration
+   - AI integration
+   - editor implementation
+3. Identify existing implementations before creating new ones.
+4. Do not duplicate existing functionality.
+5. Create a file:
+
+docs/IMPLEMENTATION_AUDIT.md
+
+Document:
+- Current architecture
+- Existing features
+- Existing bugs
+- Security issues
+- Missing features
+- Files that need modification
+- Proposed architecture
+- Migration risks
+
+Do not start major refactoring until the audit is complete.
+
+==================================================
+PHASE 1 — AUTHENTICATION AND SECURITY
+==================================================
+
+Harden authentication throughout the entire application.
+
+1. JWT SECRET
+
+Current implementation has a fallback JWT secret.
+
+Remove insecure production fallback.
+
+Production behavior:
+
+if JWT_SECRET is missing:
+    fail startup
+
+Development may optionally use a clearly marked development-only secret.
+
+Never expose JWT_SECRET to frontend code.
+
+2. HTTP AUTHENTICATION
+
+Ensure all protected APIs use JWT authentication.
+
+Public endpoints should be explicitly defined.
+
+Protected endpoints must reject:
+- missing token
+- invalid token
+- expired token
+
+Use correct HTTP statuses.
+
+3. SOCKET.IO AUTHENTICATION
+
+This is critical.
+
+Currently Socket.IO clients can connect and provide userId/roomId themselves.
+
+Implement JWT authentication during the Socket.IO handshake.
+
+Client should send:
+
+auth: {
+    token
+}
+
+Server should verify the JWT before allowing connection.
+
+Attach authenticated user to:
+
+socket.user
+
+Never trust userId supplied by the client.
+
+4. WORKSPACE AUTHORIZATION
+
+Create centralized authorization helpers.
+
+Example:
+
+requireWorkspaceMember(roomId)
+requireWorkspaceRole(roomId, role)
+canReadWorkspace()
+canEditWorkspace()
+canUseTerminal()
+canUseGit()
+canManageMembers()
+
+Roles:
+
+owner
+editor
+viewer
+
+Permissions:
+
+OWNER:
+- everything
+
+EDITOR:
+- read files
+- edit files
+- create/delete files
+- terminal
+- run code
+- Git operations according to project policy
+- AI
+
+VIEWER:
+- read files
+- see collaboration
+- cannot modify files
+- cannot use terminal
+- cannot execute code
+- cannot commit/push
+- cannot delete files
+
+Never rely on frontend role checks for security.
+
+Frontend checks are only UX.
+
+Backend must enforce permissions.
+
+5. SOCKET AUTHORIZATION
+
+For every socket event verify:
+
+- authenticated user
+- workspace membership
+- permission for requested action
+
+Do not trust:
+- roomId
+- userId
+- role
+- terminalId
+- filepath
+
+from client without verification.
+
+==================================================
+PHASE 2 — COLLABORATIVE EDITING
+==================================================
+
+This is the highest priority feature.
+
+The current system broadcasts entire file contents through Socket.IO.
+
+This is not sufficient for concurrent editing.
+
+Implement proper collaborative editing.
+
+Preferred architecture:
+
+Yjs + y-websocket-compatible synchronization or an equivalent CRDT solution.
+
+If using Socket.IO instead of a separate websocket server, implement a proper Yjs transport over the existing Socket.IO infrastructure.
+
+DO NOT create a simplistic "last update wins" system.
+
+Requirements:
+
+1. Multiple users can edit the same file simultaneously.
+
+Example:
+
+User A edits line 10.
+User B edits line 20.
+
+Both changes must survive.
+
+2. Concurrent insertions must merge correctly.
+
+3. Concurrent deletions must not corrupt document state.
+
+4. Local changes should appear immediately.
+
+5. Remote changes should appear immediately.
+
+6. No full-document replacement for every keystroke.
+
+7. Support reconnect.
+
+8. Support offline local edits.
+
+9. Reconcile changes after reconnect.
+
+10. Persist document state safely.
+
+Use:
+- CRDT document
+- update vectors/state
+- persistence
+- synchronization protocol
+
+Do not store only the latest file content as the collaboration state.
+
+==================================================
+PHASE 3 — PRESENCE AND CURSORS
+==================================================
+
+Create a dedicated presence system.
+
+Presence must contain:
+
+userId
+username
+avatar if available
+status:
+    online
+    away
+    offline
+
+activeWorkspace
+activeFile
+cursor
+selection
+lastSeen
+
+Cursor state:
+
+{
+    userId,
+    filepath,
+    lineNumber,
+    columnNumber,
+    selectionStart,
+    selectionEnd
+}
+
+IMPORTANT:
+
+When a user changes file:
+
+old file cursor must disappear immediately.
+
+Example:
+
+User A:
+file1.js → file2.js
+
+Other users must immediately see:
+
+file1.js: cursor removed
+file2.js: cursor shown
+
+When user closes a file:
+remove active-file presence.
+
+When user leaves workspace:
+remove presence.
+
+When socket disconnects:
+remove presence.
+
+When reconnecting:
+restore presence.
+
+Do not keep stale cursors.
+
+Use explicit events/state such as:
+
+presence:update
+presence:remove
+presence:sync
+
+Avoid treating cursor movement as the complete presence model.
+
+==================================================
+PHASE 4 — EDITOR
+==================================================
+
+Replace the custom textarea-based editor with Monaco Editor.
+
+Use:
+
+@monaco-editor/react
+
+Do not remove existing editor functionality without replacing it.
+
+Configure Monaco with:
+
+- syntax highlighting
+- line numbers
+- minimap
+- bracket matching
+- auto closing brackets
+- indentation
+- code folding
+- selection
+- multi-cursor
+- keyboard shortcuts
+- word wrap setting
+- font size setting
+- tab size setting
+- theme setting
+
+Support language detection based on file extension.
+
+At minimum:
+
+JavaScript
+TypeScript
+Python
+C
+C++
+Java
+Go
+Rust
+Ruby
+PHP
+JSON
+HTML
+CSS
+Markdown
+Shell
+
+Create:
+
+hooks/useMonacoEditor.js
+
+and/or:
+
+components/Editor/CodeEditor.jsx
+
+Do not keep all editor logic inside App.jsx.
+
+==================================================
+PHASE 5 — EDITOR COMMAND SYSTEM
+==================================================
+
+Create centralized keyboard command handling.
+
+Commands:
+
+Ctrl+P
+Quick Open
+
+Ctrl+Shift+P
+Command Palette
+
+Ctrl+Shift+F
+Search in Files
+
+Ctrl+S
+Save
+
+Ctrl+W
+Close Tab
+
+Ctrl+Tab
+Next Tab
+
+Ctrl+Shift+Tab
+Previous Tab
+
+Ctrl+/
+Toggle Comment
+
+Shift+Alt+Up
+Duplicate Line
+
+Alt+Up
+Move Line Up
+
+Alt+Down
+Move Line Down
+
+F2
+Rename
+
+Ctrl+Z
+Undo
+
+Ctrl+Shift+Z
+Redo
+
+Commands must work consistently inside Monaco.
+
+Do not implement dozens of unrelated keyboard handlers inside App.jsx.
+
+Create centralized command registry.
+
+==================================================
+PHASE 6 — FILE SYSTEM
+==================================================
+
+Improve file management.
+
+Support:
+
+Create file
+Create folder
+Rename file
+Rename folder
+Delete file
+Delete folder
+Move file
+Move folder
+Refresh
+Upload files
+Upload ZIP
+Download file
+Download workspace as ZIP
+
+Prevent path traversal.
+
+Reject:
+
+../
+absolute paths
+null bytes
+invalid paths
+
+Normalize all paths server-side.
+
+Never trust frontend file paths.
+
+Implement safe path resolution:
+
+workspaceRoot + requestedPath
+
+and verify the final resolved path remains inside workspaceRoot.
+
+==================================================
+PHASE 7 — AUTOSAVE AND VERSIONING
+==================================================
+
+Implement robust save state.
+
+UI states:
+
+Saved
+Saving...
+Unsaved changes
+Offline
+Syncing...
+Error
+
+Use debounced persistence.
+
+Do not save on every keystroke directly to MongoDB.
+
+Implement:
+
+local editor state
+CRDT synchronization
+debounced persistence
+server acknowledgment
+
+Add file version history.
+
+Example:
+
+History:
+- version
+- author
+- timestamp
+- change summary
+
+Allow users to restore previous versions.
+
+Do not make undo dependent on server round trips.
+
+==================================================
+PHASE 8 — OFFLINE / RECONNECT
+==================================================
+
+Implement connection state.
+
+States:
+
+CONNECTED
+CONNECTING
+RECONNECTING
+OFFLINE
+SYNCING
+SYNCED
+ERROR
+
+When disconnected:
+
+- editor remains usable
+- local edits remain
+- don't lose unsaved work
+- show Offline status
+
+When reconnected:
+
+1. authenticate socket again
+2. rejoin workspace
+3. synchronize CRDT state
+4. restore presence
+5. reconcile pending changes
+6. confirm synchronization
+
+Never silently overwrite local changes.
+
+==================================================
+PHASE 9 — TERMINAL SECURITY
+==================================================
+
+The terminal executes inside Docker.
+
+Harden it.
+
+Each terminal session must track:
+
+terminalId
+userId
+workspaceId
+socketId
+createdAt
+lastActivityAt
+
+Only the owning authenticated user should control their terminal.
+
+Verify permissions for:
+
+terminal:start
+terminal:input
+terminal:resize
+terminal:stop
+
+Viewer cannot use terminal.
+
+Clean up terminal sessions when:
+
+socket disconnects
+terminal stops
+workspace stops
+container stops
+
+==================================================
+PHASE 10 — DOCKER SANDBOX HARDENING
+==================================================
+
+Current container limits are a good starting point.
+
+Keep:
+
+512 MB memory
+1 CPU
+capabilities dropped
+no-new-privileges
+
+Add:
+
+1. Non-root user
+
+Do not run code as root.
+
+Use:
+
+/home/codesync
+
+instead of:
+
+/root
+
+2. Network isolation
+
+Default workspace containers should have no network access unless explicitly required.
+
+Prefer:
+
+NetworkMode: "none"
+
+3. PID limit
+
+Protect against fork bombs.
+
+4. CPU limits
+
+5. Memory limits
+
+6. Disk/storage limits
+
+7. Process execution timeout
+
+8. Container lifetime timeout
+
+9. Idle timeout
+
+These are different concepts.
+
+10. Read-only base filesystem where practical.
+
+11. Temporary writable directories.
+
+12. Prevent privileged mode.
+
+13. Never mount:
+- Docker socket
+- host filesystem
+- sensitive server directories
+
+14. Workspace volume should only expose that workspace.
+
+15. Sanitize workspace/container names.
+
+16. Container cleanup must handle:
+- crashed server
+- crashed container
+- deleted workspace
+- expired workspace
+- disconnected user
+
+17. Do not rely only on application memory to track containers.
+
+Docker should be treated as source of truth for runtime state.
+
+==================================================
+PHASE 11 — CONTAINER STATE
+==================================================
+
+Improve container state management.
+
+States:
+
+stopped
+starting
+running
+stopping
+failed
+
+UI should show:
+
+Container:
+Running
+
+CPU:
+12%
+
+Memory:
+184 MB / 512 MB
+
+Last activity:
+2 min ago
+
+Auto shutdown:
+13 min
+
+Handle Docker failures gracefully.
+
+If Docker is unavailable:
+
+show clear UI error.
+
+Do not pretend container is running.
+
+==================================================
+PHASE 12 — MONGODB RELIABILITY
+==================================================
+
+Current server starts even when MongoDB fails.
+
+For production:
+
+MongoDB unavailable
+→ application readiness = false
+
+Do not silently switch production state to an in-memory database.
+
+Development may optionally support a fallback behind:
+
+NODE_ENV=development
+
+or:
+
+ALLOW_MEMORY_FALLBACK=true
+
+Never use fallback silently.
+
+==================================================
+PHASE 13 — REST API SECURITY
+==================================================
+
+Add:
+
+request validation
+rate limiting
+input validation
+consistent errors
+request size limits
+security headers
+logging
+
+Use appropriate middleware.
+
+Add rate limits for:
+
+login
+register
+AI
+search
+file APIs
+Git APIs
+container APIs
+
+Particularly protect:
+
+container start
+terminal creation
+AI requests
+
+from abuse.
+
+==================================================
+PHASE 14 — SOCKET RATE LIMITING
+==================================================
+
+Protect high-frequency socket events.
+
+Events such as:
+
+cursor:move
+code:update
+terminal:input
+
+must not allow unlimited traffic.
+
+For cursor:
+
+throttle/debounce.
+
+For code synchronization:
+
+use CRDT updates rather than full content events.
+
+For terminal:
+
+limit payload sizes and reject abusive traffic.
+
+==================================================
+PHASE 15 — AI SYSTEM
+==================================================
+
+Improve existing AI implementation.
+
+Requirements:
+
+- authentication
+- workspace authorization
+- per-user rate limit
+- request size limit
+- token/context limit
+- cancellation
+- streaming if supported
+- conversation persistence
+- clear errors
+- usage tracking
+
+Do not send entire repository unnecessarily.
+
+AI context should be:
+
+current file
+selected code
+relevant files
+user question
+workspace metadata
+
+Implement actions through a safe diff workflow.
+
+AI should NOT directly overwrite files.
+
+Workflow:
+
+AI suggestion
+→ diff
+→ user review
+→ Accept
+→ apply CRDT/editor change
+
+Existing DiffReviewModal should be preserved and improved.
+
+==================================================
+PHASE 16 — GIT
+==================================================
+
+Improve Git functionality.
+
+Support:
+
+status
+diff
+add
+commit
+branch
+checkout
+pull
+push
+log
+
+Add:
+
+clone repository
+import GitHub repository
+import GitLab repository
+
+Never expose Git credentials to frontend.
+
+Prefer OAuth integrations where possible.
+
+If PATs are supported:
+
+- encrypt server-side
+- never log them
+- never send them to browser
+- never store plaintext unnecessarily
+
+Git operations must run inside the correct workspace.
+
+==================================================
+PHASE 17 — SEARCH
+==================================================
+
+Implement:
+
+Quick Open:
+Ctrl+P
+
+Search in Files:
+Ctrl+Shift+F
+
+Search features:
+
+filename
+content
+case-sensitive
+whole-word
+regex
+exclude patterns
+
+Prevent search from traversing:
+
+.git
+node_modules
+large binary files
+workspace internals
+system directories
+
+Use streaming/pagination for large results.
+
+==================================================
+PHASE 18 — PROBLEMS PANEL
+==================================================
+
+Add a bottom Problems panel.
+
+Display:
+
+Errors
+Warnings
+Info
+
+Each problem:
+
+file
+line
+column
+message
+severity
+
+Clicking a problem should navigate Monaco to that location.
+
+Initially support diagnostics for:
+
+JavaScript/TypeScript
+Python
+
+Then expand later.
+
+==================================================
+PHASE 19 — OUTPUT / TERMINAL PANEL
+==================================================
+
+Create bottom-panel tabs:
+
+PROBLEMS
+OUTPUT
+TERMINAL
+DEBUG CONSOLE
+
+Terminal remains xterm.js.
+
+Output should display:
+
+build output
+run output
+Git output
+AI operation output
+system messages
+
+Do not mix everything into terminal.
+
+==================================================
+PHASE 20 — PRESENCE UI
+==================================================
+
+Create a professional collaboration header.
+
+Example:
+
+● Kavin
+● Arun
+● Priya
+
+Show:
+
+online
+away
+offline
+
+Show active file:
+
+Arun — editing App.jsx
+
+Clicking a collaborator can navigate to their active file/cursor.
+
+==================================================
+PHASE 21 — ACTIVITY HISTORY
+==================================================
+
+Add project activity.
+
+Examples:
+
+Kavin created app.js
+Arun edited server.js
+Priya joined workspace
+Kavin committed "Fix authentication"
+Container stopped due to inactivity
+
+Persist important activities.
+
+Display recent activity in project UI.
+
+==================================================
+PHASE 22 — RESOURCE MONITOR
+==================================================
+
+Expose workspace resource information:
+
+CPU
+Memory
+Storage
+Container state
+Last activity
+Terminal sessions
+
+Do not expose sensitive Docker internals.
+
+==================================================
+PHASE 23 — PROJECT IMPORT/EXPORT
+==================================================
+
+Support:
+
+New project
+Upload ZIP
+Download ZIP
+Clone Git repository
+
+When importing ZIP:
+
+- sanitize paths
+- prevent zip-slip
+- reject dangerous files
+- enforce file count limit
+- enforce total size limit
+
+==================================================
+PHASE 24 — DEPLOYMENT PREVIEW
+==================================================
+
+Design a future-ready preview system.
+
+Workspace container
+→ exposed internal port
+→ reverse proxy
+→ temporary preview URL
+
+Implement safely.
+
+Never expose Docker containers directly to the internet.
+
+Preview URLs must be:
+
+- authenticated or tokenized
+- workspace-scoped
+- temporary
+- rate limited
+
+==================================================
+PHASE 25 — FRONTEND ARCHITECTURE
+==================================================
+
+App.jsx is currently too large.
+
+Refactor.
+
+Target:
+
+src/
+  components/
+    layout/
+    editor/
+    terminal/
+    collaboration/
+    files/
+    git/
+    ai/
+    search/
+    project/
+    settings/
+
+  hooks/
+    useAuth.js
+    useWorkspace.js
+    useEditor.js
+    useCollaboration.js
+    usePresence.js
+    useTerminal.js
+    useGit.js
+    useAI.js
+    useFiles.js
+
+  stores/
+    authStore.js
+    workspaceStore.js
+    editorStore.js
+    collaborationStore.js
+    terminalStore.js
+
+  services/
+    api.js
+    socket.js
+    collaboration.js
+
+  utils/
+
+Do not over-engineer.
+
+Keep components focused.
+
+==================================================
+PHASE 26 — STATE MANAGEMENT
+==================================================
+
+Use a lightweight state manager such as Zustand if appropriate.
+
+Separate:
+
+authentication state
+workspace state
+editor state
+collaboration state
+terminal state
+AI state
+
+Avoid passing enormous numbers of props.
+
+Avoid storing server state redundantly in multiple places.
+
+==================================================
+PHASE 27 — ERROR HANDLING
+==================================================
+
+Implement consistent backend errors:
+
+{
+    success: false,
+    error: {
+        code,
+        message
+    }
+}
+
+Example codes:
+
+AUTH_REQUIRED
+AUTH_INVALID
+WORKSPACE_NOT_FOUND
+WORKSPACE_FORBIDDEN
+FILE_NOT_FOUND
+FILE_INVALID_PATH
+TERMINAL_FORBIDDEN
+CONTAINER_UNAVAILABLE
+RATE_LIMITED
+INTERNAL_ERROR
+
+Frontend should display useful messages.
+
+Never display raw stack traces to users.
+
+==================================================
+PHASE 28 — LOGGING
+==================================================
+
+Implement structured logging.
+
+Include:
+
+requestId
+userId
+workspaceId
+socketId
+terminalId
+containerId
+
+Do not log:
+
+JWTs
+passwords
+Git tokens
+AI secrets
+sensitive user data
+
+==================================================
+PHASE 29 — HEALTH / READINESS
+==================================================
+
+Implement:
+
+GET /api/health
+GET /api/live
+GET /api/ready
+
+/live:
+Node process is alive.
+
+ /ready:
+MongoDB
+Docker
+required services
+
+must be available.
+
+==================================================
+PHASE 30 — TESTING
+==================================================
+
+Introduce proper automated tests.
+
+Backend:
+
+unit tests
+API tests
+authentication tests
+authorization tests
+workspace tests
+file path security tests
+Git tests
+container service tests
+Socket.IO tests
+
+Frontend:
+
+component tests
+editor tests
+collaboration tests
+presence tests
+
+E2E:
+
+login
+create project
+open file
+edit file
+two users edit simultaneously
+cursor synchronization
+file switching
+terminal
+Git
+AI diff
+viewer permissions
+
+==================================================
+PHASE 31 — COLLABORATION E2E TEST
+==================================================
+
+This test is mandatory.
+
+Open the same workspace in two browser sessions.
+
+User A:
+open file A
+
+User B:
+open same file
+
+User A:
+type:
+
+AAAA
+
+User B:
+simultaneously type:
+
+BBBB
+
+Verify:
+
+- neither update disappears
+- final CRDT state is correct
+- both cursors are visible
+- switching files removes stale cursor
+- disconnect removes presence
+- reconnect restores state
+- no refresh is required
+
+==================================================
+PHASE 32 — CI/CD
+==================================================
+
+Add GitHub Actions.
+
+On pull request:
+
+- install dependencies
+- lint
+- unit tests
+- API tests
+- build frontend
+- build backend
+- security audit
+
+Do not allow broken builds to merge.
+
+==================================================
+PHASE 33 — LINTING AND FORMATTING
+==================================================
+
+Add:
+
+ESLint
+Prettier
+EditorConfig
+
+Create consistent scripts:
+
+npm run lint
+npm run format
+npm run test
+npm run build
+
+==================================================
+PHASE 34 — DOCUMENTATION
+==================================================
+
+Create:
+
+README.md
+
+docs/
+  architecture.md
+  collaboration.md
+  security.md
+  docker-sandbox.md
+  api.md
+  deployment.md
+  testing.md
+
+README must explain:
+
+What CodeSync is
+Features
+Architecture
+Tech stack
+Setup
+Environment variables
+Docker requirements
+MongoDB requirements
+Running locally
+Testing
+Deployment
+Security
+Roadmap
+
+==================================================
+PHASE 35 — ENVIRONMENT VARIABLES
+==================================================
+
+Create:
+
+.env.example
+
+Include:
+
+MONGODB_URI=
+JWT_SECRET=
+PORT=
+CLIENT_URL=
+AI_API_KEY=
+IDLE_TIMEOUT_MINUTES=
+MAX_CONTAINER_MEMORY=
+MAX_CONTAINER_CPU=
+MAX_WORKSPACE_SIZE=
+MAX_FILE_SIZE=
+
+Never commit real secrets.
+
+==================================================
+PHASE 36 — PERFORMANCE
+==================================================
+
+Optimize:
+
+large files
+large workspaces
+large search results
+Socket traffic
+editor updates
+AI context
+file tree rendering
+
+Do not send entire file contents on every cursor movement.
+
+Do not save every keystroke directly to MongoDB.
+
+Use:
+
+debouncing
+throttling
+incremental updates
+pagination
+virtualization where necessary
+
+==================================================
+PHASE 37 — SECURITY AUDIT
+==================================================
+
+After implementation, inspect specifically for:
+
+- path traversal
+- zip slip
+- command injection
+- Docker escape
+- privileged containers
+- root execution
+- Docker socket exposure
+- JWT weaknesses
+- CORS
+- CSRF where relevant
+- XSS
+- unsafe HTML rendering
+- AI prompt injection
+- Git credential leakage
+- rate-limit bypass
+- unauthorized workspace access
+- unauthorized terminal access
+- oversized requests
+- memory exhaustion
+- fork bombs
+- disk exhaustion
+
+Fix every issue found.
+
+==================================================
+PHASE 38 — DO NOT BREAK EXISTING FEATURES
+==================================================
+
+Before finishing, verify these existing features still work:
+
+Authentication
+Projects
+Project switcher
+Members
+Invitations
+Viewer/editor roles
+File explorer
+File creation
+Folder creation
+Tabs
+Editing
+Save
+Run
+Terminal
+Docker
+Auto teardown
+Git
+Search
+AI
+AI diff review
+Command palette
+Settings
+Cursor collaboration
+Presence
+
+If a refactor breaks an existing feature, fix it before proceeding.
+
+==================================================
+PHASE 39 — FINAL VALIDATION
+==================================================
+
+Run:
+
+npm install
+npm run lint
+npm run test
+npm run build
+
+Run backend tests.
+
+Run frontend tests.
+
+Run E2E tests.
+
+Check Docker.
+
+Check MongoDB.
+
+Check Socket.IO.
+
+Check two-user collaboration.
+
+Check viewer restrictions.
+
+Check reconnect.
+
+Check container cleanup.
+
+==================================================
+IMPORTANT DEVELOPMENT RULES
+==================================================
+
+1. Never blindly rewrite large files.
+
+2. Before modifying a file, inspect its current implementation.
+
+3. Preserve working features.
+
+4. Prefer small incremental changes.
+
+5. After each major phase:
+   - run tests
+   - fix errors
+   - continue
+
+6. Do not create fake/mock implementations just to satisfy the feature list.
+
+7. Do not claim a feature is complete unless it actually works.
+
+8. Do not silently ignore existing bugs.
+
+9. If an existing architecture conflicts with a required improvement, document the conflict and migrate safely.
+
+10. Keep backward compatibility where practical.
+
+11. Never commit secrets.
+
+12. Never weaken security to make development easier.
+
+13. Do not use the frontend as the security boundary.
+
+14. Server is authoritative for:
+    authentication
+    authorization
+    workspace membership
+    file paths
+    terminal permissions
+    Git permissions
+    container permissions
+
+15. CRDT/collaboration state must be authoritative for concurrent editing.
+
+==================================================
+FINAL DELIVERABLE
+==================================================
+
+When all work is complete, produce:
+
+1. Updated code.
+
+2. docs/IMPLEMENTATION_AUDIT.md
+
+3. docs/architecture.md
+
+4. docs/security.md
+
+5. docs/collaboration.md
+
+6. docs/docker-sandbox.md
+
+7. docs/api.md
+
+8. README.md
+
+9. .env.example
+
+10. Automated tests.
+
+11. GitHub Actions CI.
+
+12. A final report:
+
+CODE SYNC IMPLEMENTATION REPORT
+
+Completed:
+- ...
+
+Partially completed:
+- ...
+
+Not completed:
+- ...
+
+Security fixes:
+- ...
+
+Architecture changes:
+- ...
+
+Tests:
+- ...
+
+Known limitations:
+- ...
+
+Commands to run:
+- ...
+
+Most important remaining work:
+- ...
+
+IMPORTANT:
+Do not simply report what should be done.
+
+Actually implement the changes in the repository.
+
+Start with the repository audit, then proceed phase by phase.

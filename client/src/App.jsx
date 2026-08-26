@@ -3,6 +3,9 @@ import axios from 'axios';
 import { io } from 'socket.io-client';
 import ContainerControl from './components/ContainerControl';
 import TerminalPanel from './components/TerminalPanel';
+import BottomPanel from './components/BottomPanel';
+import CollaborationHeader from './components/CollaborationHeader';
+import CodeEditor from './components/Editor/CodeEditor';
 import AiChatSidebar from './components/AiChatSidebar';
 import GitSidebar from './components/GitSidebar';
 import SearchSidebar from './components/SearchSidebar';
@@ -640,6 +643,13 @@ export default function App() {
 
   // Handle file selection (Multi-tab integration)
   const handleSelectFile = async (filepath) => {
+    if (activeTabPath && syncSocketRef.current) {
+      syncSocketRef.current.emit('cursor:remove', {
+        roomId,
+        filepath: activeTabPath,
+      });
+    }
+
     if (!filepath) {
       setActiveTabPath(null);
       return;
@@ -672,6 +682,14 @@ export default function App() {
   // Close Editor Tab
   const handleCloseTab = (filepath, e) => {
     if (e) e.stopPropagation();
+
+    if (syncSocketRef.current) {
+      syncSocketRef.current.emit('cursor:remove', {
+        roomId,
+        filepath,
+      });
+    }
+
     setOpenTabs((prevTabs) => {
       const nextTabs = prevTabs.filter((t) => t !== filepath);
       if (activeTabPath === filepath) {
@@ -1250,6 +1268,17 @@ export default function App() {
             <Settings size={16} />
           </button>
 
+          <CollaborationHeader
+            currentUser={currentUser}
+            remoteCursors={remoteCursors}
+            userRole={activeProject?.role}
+            onJumpToUserCursor={(collab) => {
+              if (collab.filepath) {
+                handleSelectFile(collab.filepath);
+              }
+            }}
+          />
+
           <div style={{ fontSize: '12px', color: '#858585', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <ShieldCheck size={14} color="#4ec9b0" /> Sandbox Active
           </div>
@@ -1473,7 +1502,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Line-Numbered Editor Area or Image Photo Previewer */}
+                  {/* Editor Area or Image Photo Previewer */}
                   {(() => {
                     const ext = (activeTabPath || '').split('.').pop()?.toLowerCase() || '';
                     const isImageFile = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico', '.bmp', '.avif'].includes(ext) || activeFileContext.startsWith('data:image/');
@@ -1525,187 +1554,32 @@ export default function App() {
                       );
                     }
 
-                    const currentUserId = String(currentUser?._id || currentUser?.id || 'anon');
-                    const fileCursorsObj = remoteCursors[activeTabPath] || {};
-                    const activeCursorsList = Object.values(fileCursorsObj).filter(
-                      (c) => String(c.userId || c.id) !== currentUserId && Date.now() - c.lastActive < 60000
-                    );
-                    const lines = activeFileContext.split('\n');
-
                     return (
-                      <div
-                        style={{
-                          flex: 1,
-                          display: 'flex',
-                          background: '#181818',
-                          border: '1px solid #2d2d2d',
-                          borderRadius: '6px',
-                          overflow: 'hidden',
-                          position: 'relative',
+                      <CodeEditor
+                        filepath={activeTabPath}
+                        value={activeFileContext}
+                        onChange={(newVal) => handleEditorChange({ target: { value: newVal } })}
+                        onCursorMove={(cursorPos) => {
+                          if (syncSocketRef.current) {
+                            syncSocketRef.current.emit('cursor:move', {
+                              roomId,
+                              filepath: activeTabPath,
+                              lineNumber: cursorPos.lineNumber,
+                              columnNumber: cursorPos.columnNumber,
+                              selectionStart: cursorPos.selectionStart,
+                              selectionEnd: cursorPos.selectionEnd,
+                              user: currentUser,
+                            });
+                          }
                         }}
-                      >
-                        {/* Line Numbers Gutter with Remote User Badges */}
-                        <div
-                          ref={gutterRef}
-                          style={{
-                            minWidth: '56px',
-                            backgroundColor: '#1e1e1e',
-                            borderRight: '1px solid #2d2d2d',
-                            padding: '12px 0',
-                            fontFamily: 'Fira Code, Consolas, monospace',
-                            fontSize: '13px',
-                            lineHeight: '1.6',
-                            color: '#858585',
-                            textAlign: 'right',
-                            userSelect: 'none',
-                            overflow: 'hidden',
-                          }}
-                        >
-                          {lines.map((_, idx) => {
-                            const lineNum = idx + 1;
-                            const matchingCursors = activeCursorsList.filter((c) => c.lineNumber === lineNum);
-                            const hasCursor = matchingCursors.length > 0;
-                            const firstCursor = matchingCursors[0];
-
-                            return (
-                              <div
-                                key={lineNum}
-                                style={{
-                                  paddingRight: '10px',
-                                  position: 'relative',
-                                  height: '1.6em',
-                                  backgroundColor: hasCursor ? `${firstCursor.color}22` : 'transparent',
-                                  color: hasCursor ? firstCursor.color : '#858585',
-                                  fontWeight: hasCursor ? 'bold' : 'normal',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'flex-end',
-                                }}
-                              >
-                                {lineNum}
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Editor Textarea with In-Line Remote Carets Overlay */}
-                        <div style={{ flex: 1, position: 'relative', overflow: 'hidden', display: 'flex' }}>
-                          <textarea
-                            ref={textareaRef}
-                            style={{
-                              flex: 1,
-                              width: '100%',
-                              height: '100%',
-                              background: '#181818',
-                              border: 'none',
-                              color: activeProject?.role === 'viewer' ? '#858585' : '#d4d4d4',
-                              fontFamily: 'Fira Code, Consolas, monospace',
-                              fontSize: '13px',
-                              lineHeight: '1.6',
-                              padding: '12px',
-                              outline: 'none',
-                              resize: 'none',
-                              overflowY: 'auto',
-                              whiteSpace: 'pre',
-                              cursor: activeProject?.role === 'viewer' ? 'not-allowed' : 'text',
-                            }}
-                            value={activeFileContext}
-                            onScroll={(e) => {
-                              if (gutterRef.current) {
-                                gutterRef.current.scrollTop = e.target.scrollTop;
-                              }
-                              setEditorScroll({
-                                scrollTop: e.target.scrollTop,
-                                scrollLeft: e.target.scrollLeft,
-                              });
-                            }}
-                            onKeyUp={(e) => updateLocalCursor(e)}
-                            onKeyDown={(e) => handleEditorKeyDown(e)}
-                            onClick={(e) => updateLocalCursor(e)}
-                            onMouseDown={(e) => updateLocalCursor(e)}
-                            onMouseUp={(e) => updateLocalCursor(e)}
-                            onSelect={(e) => updateLocalCursor(e)}
-                            onFocus={(e) => updateLocalCursor(e)}
-                            onChange={(e) => {
-                              if (activeProject?.role === 'viewer') return;
-                              handleEditorChange(e);
-                              updateLocalCursor(e);
-                            }}
-                            readOnly={activeProject?.role === 'viewer'}
-                          />
-
-                          {/* In-Line Remote User Carets Overlay Layer */}
-                          <div
-                            style={{
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              bottom: 0,
-                              pointerEvents: 'none',
-                              overflow: 'hidden',
-                              fontFamily: 'Fira Code, Consolas, monospace',
-                              fontSize: '13px',
-                              lineHeight: '1.6',
-                            }}
-                          >
-                            <div
-                              style={{
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                width: '100%',
-                                height: '100%',
-                                transform: `translate(-${editorScroll.scrollLeft}px, -${editorScroll.scrollTop}px)`,
-                              }}
-                            >
-                              {activeCursorsList.map((c, i) => {
-                                const lineIdx = (c.lineNumber || 1) - 1;
-                                const colIdx = (c.columnNumber || 1) - 1;
-
-                                return (
-                                  <div
-                                    key={c.userId || i}
-                                    style={{
-                                      position: 'absolute',
-                                      top: `calc(12px + ${lineIdx} * 1.6em)`,
-                                      left: `calc(12px + ${colIdx} * 1ch)`,
-                                      width: '2px',
-                                      height: '1.6em',
-                                      backgroundColor: c.color,
-                                      boxShadow: `0 0 8px ${c.color}`,
-                                      transition: 'top 0.08s ease-out, left 0.08s ease-out',
-                                      zIndex: 10,
-                                    }}
-                                  >
-                                    {/* Caret Flag Tag floating above words */}
-                                    <span
-                                      style={{
-                                        position: 'absolute',
-                                        bottom: '100%',
-                                        left: '-2px',
-                                        backgroundColor: c.color,
-                                        color: '#000000',
-                                        fontSize: '10px',
-                                        fontWeight: '800',
-                                        padding: '1px 5px',
-                                        borderRadius: '3px 3px 3px 0',
-                                        whiteSpace: 'nowrap',
-                                        boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
-                                        pointerEvents: 'none',
-                                        transform: 'translateY(-2px)',
-                                        zIndex: 11,
-                                      }}
-                                    >
-                                      {c.username}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                        readOnly={activeProject?.role === 'viewer'}
+                        socket={syncSocketRef.current}
+                        roomId={roomId}
+                        onSave={handleSaveFile}
+                        onOpenQuickOpen={() => setIsCommandPaletteOpen(true)}
+                        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+                        onOpenSearch={() => setActiveSidebarTab('search')}
+                      />
                     );
                   })()}
                 </div>
@@ -1779,7 +1653,11 @@ export default function App() {
             )}
           </div>
 
-          <TerminalPanel roomId={roomId} language={language} runCommandTrigger={runCommandTrigger} userRole={activeProject?.role} />
+          <BottomPanel
+            roomId={roomId}
+            runCommandTrigger={runCommandTrigger}
+            userRole={activeProject?.role}
+          />
         </div>
 
         {/* Right Sidebar Panel */}

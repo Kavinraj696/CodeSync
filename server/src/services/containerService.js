@@ -158,6 +158,7 @@ async function startWorkspaceContainer(roomId, language) {
         Binds: [`${workspaceDir}:/root`],
         Memory: 512 * 1024 * 1024, // 512MB RAM cap
         NanoCpus: 1000000000,       // 1 CPU cap
+        PidsLimit: 100,            // Prevent fork-bomb attacks (Phase 10)
         CapDrop: ['ALL'],          // Drop root capabilities for sandbox security
         SecurityOpt: ['no-new-privileges:true'],
         AutoRemove: false,

@@ -1,13 +1,15 @@
 const express = require('express');
 const router = express.Router({ mergeParams: true });
 const filesController = require('../controllers/filesController');
+const { verifyToken, optionalToken } = require('../middleware/authMiddleware');
 
-router.get('/', filesController.listFiles);
-router.post('/', filesController.createFile);
-router.post('/folders', filesController.createFolder);
-router.post('/import-folder', filesController.importFolder);
-router.post('/read', filesController.readFile);
-router.post('/move', filesController.moveFile);
-router.delete('/', filesController.deleteFile);
+router.get('/', optionalToken, filesController.listFiles);
+router.post('/read', optionalToken, filesController.readFile);
+
+router.post('/', verifyToken, filesController.createFile);
+router.post('/folders', verifyToken, filesController.createFolder);
+router.post('/import-folder', verifyToken, filesController.importFolder);
+router.post('/move', verifyToken, filesController.moveFile);
+router.delete('/', verifyToken, filesController.deleteFile);
 
 module.exports = router;

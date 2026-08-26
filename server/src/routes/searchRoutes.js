@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router({ mergeParams: true });
 const searchController = require('../controllers/searchController');
+const { optionalToken } = require('../middleware/authMiddleware');
 
-router.get('/', searchController.searchFiles);
+router.get('/', optionalToken, searchController.searchFiles);
 
 module.exports = router;

@@ -1,3 +1,4 @@
+const { authSocketMiddleware, getWorkspaceUserRole } = require('../middleware/authMiddleware');
 const terminalService = require('../services/terminalService');
 
 /**
@@ -6,13 +7,23 @@ const terminalService = require('../services/terminalService');
 function setupTerminalSocket(io) {
   const terminalNamespace = io.of('/terminal');
 
+  // Enforce JWT authentication on terminal namespace
+  terminalNamespace.use(authSocketMiddleware);
+
   terminalNamespace.on('connection', (socket) => {
-    console.log(`[Socket.IO /terminal] Client connected: ${socket.id}`);
+    console.log(`[Socket.IO /terminal] Client connected: ${socket.id} (User: ${socket.user?.username || 'Anon'})`);
 
     // Client requests terminal creation
     socket.on('terminal:start', async (payload, callback) => {
       try {
         const { roomId, cols, rows, language } = payload || {};
+
+        // Enforce RBAC: Viewers cannot open terminal
+        const role = await getWorkspaceUserRole(roomId, socket.user?.id);
+        if (role === 'viewer') {
+          throw new Error('Access denied: Read-only viewers cannot open terminal sessions');
+        }
+
         const session = await terminalService.createTerminalSession(socket, {
           roomId,
           cols,
